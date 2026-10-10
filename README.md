@@ -111,8 +111,7 @@
 
 ```
 CamelAI/
-├── .gitignore                # 忽略私鑰與 build 輸出
-├── DEPLOY_KEY.md             # 部署金鑰使用說明（僅參考，不含私鑰內容）
+├── .gitignore                # 忽略 build 輸出
 ├── package.json              # 依賴（已精簡，移除 container/queue 相關）
 ├── wrangler.jsonc            # Cloudflare 配置（僅本地開發參考，面板直連时可忽略）
 ├── src/
@@ -125,14 +124,6 @@ CamelAI/
 │   └── 0001_init.sql         # 供本地 wrangler 使用，面板直連时无需執行
 └── README.md
 ```
-
----
-
-## 🔐 部署金鑰
-
-- **私鑰**：`camelai-deploy-key`（放在項目根目錄，`.gitignore` 已忽略，勿上傳 GitHub）。
-- **公鑰**：`camelai-deploy-key.pub`（已添加至 GitHub `scupro/CamelAI` repo 的 `Settings → Deploy keys`）。
-- 用於本地測試或手動 `git push`：`GIT_SSH_COMMAND="ssh -i $(pwd)/camelai-deploy-key" git push origin main`。
 
 ---
 
