@@ -88,8 +88,8 @@
 ## 🚀 Step 5：首次部署
 
 - 面板自動檢測到 `package.json` 並啟動 Build。
-- Build Command 設為 `npm run build:cf`。
-- Build Output Directory 設為 `dist`。
+- Build Command 設為 `npm run build`。
+- Build Output Directory 設為 `build/client`。
 - 點擊 **`Deploy`**，等待約 1-2 分鐘。
 - 完成後會給出訪問 URL（如 `https://camelai-free-xxx.workers.dev`）。
 
