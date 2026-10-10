@@ -7,30 +7,23 @@
   "scripts": {
     "dev": "react-router dev",
     "dev:local-auth": "LOCAL_AUTH_BYPASS=1 WORKER_BASE_URL=http://localhost:3001 react-router dev",
-    "build": "bun run build:cf",
-    "build:cf": "bun run build:renderer && react-router build",
+    "build": "react-router build",
+    "build:cf": "react-router build",
     "start": "node scripts/wrangler-dev.mjs",
     "typecheck": "react-router typegen && tsc --incremental --tsBuildInfoFile node_modules/.cache/chiridion-typecheck.tsbuildinfo && tsc -p workers/app-usage-guard/tsconfig.json --noEmit",
-    "lint": "bun run check:runtime-lucide-imports && bun run lint:source",
-    "lint:source": "oxlint src workers/main/src workers/discord-bridge/src workers/dispatcher/src workers/user-logs-tail/src workers/app-usage-guard/src scripts sandbox/create-worker/renderer sandbox/create-worker/templates/starter workers/main/db-query-sandbox-assets/runner -A all -D no-unused-vars",
+    "lint": "oxlint src workers/main/src workers/discord-bridge/src workers/dispatcher/src workers/user-logs-tail/src workers/app-usage-guard/src scripts sandbox/create-worker/renderer sandbox/create-worker/templates/starter workers/main/db-query-sandbox-assets/runner -A all -D no-unused-vars",
     "test": "vitest",
     "test:run": "vitest run",
     "test:workers": "vitest run --config vitest.workers.config.ts",
     "test:discord-bridge": "vitest run --config vitest.discord-bridge.config.ts",
-    "free:dev": "bun run dev:local-auth",
-    "free:build": "bun run build:cf",
+    "free:dev": "npm run dev:local-auth",
+    "free:build": "npm run build",
     "free:deploy": "wrangler deploy --env free",
     "free:start": "node scripts/wrangler-dev.mjs --env free",
-    
-    # Simplified deploy scripts - removed complex container/queue deployments
     "deploy:free:main": "node scripts/deploy-main.mjs free",
     "deploy:free": "wrangler deploy --env free",
-    
-    # Removed heavy-duty tests for free tier
-    "test:all": "bun run test:run",
+    "test:all": "npm run test:run",
     "typecheck:minimal": "tsc --noEmit --noUnusedLocals --noUnusedParameters --incremental false",
-    
-    # Free tier specific
     "free:config": "echo 'Free tier configuration active - R2, containers, queues disabled'",
     "free:limits": "echo 'Daily requests: 100,000 (reset midnight UTC)'",
     "free:info": "echo 'camelAI Free Tier - Personal use only. No R2, No containers, No queues.'"
