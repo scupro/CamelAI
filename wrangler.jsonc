@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "camelai-free-tier",
+  "name": "CamelAI",
   "main": "workers/main/src/index.ts",
   "compatibility_date": "2026-03-24",
   "compatibility_flags": ["nodejs_compat"],

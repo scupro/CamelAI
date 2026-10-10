@@ -34,7 +34,7 @@
 ## 目錄結構
 
 ```
-camelai-free-tier/
+CamelAI Free Tier/
 ├── wrangler.jsonc           # Cloudflare 配置（D1/KV/Workers AI）
 ├── package.json             # 依賴與腳本（已精簡）
 ├── src/
@@ -59,7 +59,7 @@ camelai-free-tier/
 ### 1. 安裝依賴並登錄
 
 ```bash
-cd camelai-free-tier
+cd CamelAI
 npm install
 npx wrangler login
 ```
@@ -68,7 +68,7 @@ npx wrangler login
 
 ```bash
 # D1 數據庫（存會話和文件）
-npx wrangler d1 create camelai-db
+npx wrangler d1 create CamelAI-db
 
 # KV 命名空間（存狀態和緩存）
 npx wrangler kv:namespace create APP_KV
@@ -79,7 +79,7 @@ npx wrangler kv:namespace create EMAIL_TO_USER
 將輸出的 ID 填入 `wrangler.jsonc`：
 
 ```jsonc
-"d1_databases": [{ "binding": "APP_DB", "database_id": "<你的D1 ID>", "database_name": "camelai-db" }],
+"d1_databases": [{ "binding": "APP_DB", "database_id": "<你的D1 ID>", "database_name": "CamelAI-db" }],
 "kv_namespaces": [
   { "binding": "APP_KV", "id": "<KV ID 1>" },
   { "binding": "SESSIONS", "id": "<KV ID 2>" },
@@ -90,7 +90,7 @@ npx wrangler kv:namespace create EMAIL_TO_USER
 ### 3. 應用 D1 遷移
 
 ```bash
-npx wrangler d1 migrations apply camelai-db
+npx wrangler d1 migrations apply CamelAI-db
 ```
 
 ### 4. 配置 AI 金鑰（選用）
