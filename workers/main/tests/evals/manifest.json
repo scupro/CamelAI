@@ -1,0 +1,199 @@
+{
+  "$comment": "Single source of truth for committed agent evals. Adding an eval = create workers/main/tests/evals/<id>.test.ts (gated on RUN_AGENT_EVALS, ending in emitEvalTranscript from ./eval-transcript) and add one entry here. Each entry requires kind: unit checks one mechanism; skill checks end-to-end agent ability. Optional tier:\"hard\" marks high-difficulty evals; absent means standard. New evals should emit a task-specific 0-4 anchored rubric with 3-8 criteria whose positive weights total 100. Machine checks and scorecards remain diagnostic evidence; the rollout judge is primary when available, while harness and artifact-contract failures remain hard gates. Deterministic pass/fail checks should cover objective persisted state, safety boundaries, and harness integrity—not exact tool spellings, incidental call order, prose wording, or efficiency; put those semantic judgments in the task rubric and retain probes as runtimeAssertions. Consumed by scripts/run-agent-eval.mjs and scripts/run-eval-suite.sh. custom-prompt-live is intentionally NOT listed — it's the generic env-driven custom-prompt harness, not a fixed eval. realDeploy:true marks evals that only run when real deploy is enabled (CF_API_TOKEN + EVAL_REAL_DEPLOY!=0). Evals run on a local agent runtime (scripts/runtime-eval-harness.mjs; each test calls runRuntimeEval from ./runtime-eval); runtimeBlocked:\"<reason>\" marks an eval whose subject the runtime does not have, which the runners skip (EVAL_RUN_BLOCKED=1 runs it anyway).",
+  "evals": [
+    {
+      "id": "dashboard-fake-data-live",
+      "description": "Build a polished static HTML dashboard from fake business data",
+      "kind": "skill"
+    },
+    {
+      "id": "shadcn-components-live",
+      "description": "Create a DO-backed React Router app and add new shadcn/ui components",
+      "kind": "skill"
+    },
+    {
+      "id": "do-backed-project-deploy-live",
+      "description": "Create and deploy a DO-backed project with Durable Object persistence through deploy_project",
+      "kind": "skill",
+      "realDeploy": true
+    },
+    {
+      "id": "browser-automation-live",
+      "description": "Deploy a small app and verify it with env.BROWSER interactive browser automation",
+      "kind": "skill",
+      "realDeploy": true
+    },
+    {
+      "id": "project-update-redeploy-state-live",
+      "description": "Update and redeploy a DO-backed app while preserving Durable Object state",
+      "kind": "skill",
+      "realDeploy": true
+    },
+    {
+      "id": "space-matching-game-live",
+      "description": "Build and deploy a persistent space themed matching game with leaderboard",
+      "kind": "skill",
+      "realDeploy": true
+    },
+    {
+      "id": "project-write-file-live",
+      "description": "Write and verify a file in a DO-backed project",
+      "kind": "unit"
+    },
+    {
+      "id": "template-select-crud-live",
+      "description": "Choose the CRUD project starter from a stateful internal-tool request",
+      "kind": "unit"
+    },
+    {
+      "id": "template-select-vanilla-live",
+      "description": "Choose the dependency-light starter from a client-only browser-game request",
+      "kind": "unit"
+    },
+    {
+      "id": "skill-reference-read-live",
+      "description": "Read a starter-specific skill reference without misrouting it into project storage",
+      "kind": "unit"
+    },
+    {
+      "id": "vanilla-project-deploy-live",
+      "description": "Build, deploy, and fetch the untouched vanilla scaffold through the testing-grounds stack",
+      "kind": "skill",
+      "realDeploy": true
+    },
+    {
+      "id": "template-select-ai-chat-live",
+      "description": "Choose the AI chat project starter from a conversational-assistant request",
+      "kind": "unit"
+    },
+    {
+      "id": "template-select-integration-dashboard-live",
+      "description": "Choose the integration dashboard starter from a connected-services request",
+      "kind": "unit"
+    },
+    {
+      "id": "template-select-data-dashboard-live",
+      "description": "Choose the data dashboard starter from an interactive-metrics request",
+      "kind": "unit"
+    },
+    {
+      "id": "template-select-data-analysis-live",
+      "description": "Choose the data-analysis starter from a notebook-report request",
+      "kind": "unit"
+    },
+    {
+      "id": "data-analysis-report-live",
+      "description": "Create a notebook-first data-analysis project, run the notebook, and preview the report",
+      "kind": "skill"
+    },
+    {
+      "id": "notebook-fix-rerun-live",
+      "description": "Fix a stale failing data-analysis notebook, rerun it, and preview the refreshed report",
+      "kind": "skill"
+    },
+    {
+      "id": "notebook-deploy-live",
+      "description": "Create a data-analysis notebook project, run it, and publish the report as a static app with minimal prompting",
+      "kind": "skill",
+      "realDeploy": true
+    },
+    {
+      "id": "project-snapshot-revert-live",
+      "description": "Discover and restore a DO-backed project source snapshot with list_commits/revert_project",
+      "kind": "unit"
+    },
+    {
+      "id": "project-revert-redeploy-live",
+      "description": "Restore a DO-backed project source snapshot and redeploy the restored live app",
+      "kind": "skill",
+      "realDeploy": true
+    },
+    {
+      "id": "scheduled-prompt-live",
+      "description": "Create a scheduled prompt and verify it persisted (exercises the lean-dropped schedules tools via discovery)",
+      "kind": "unit"
+    },
+    {
+      "id": "workflow-live",
+      "description": "Create a deterministic workflow and verify it persisted (exercises the lean-dropped workflows tools via discovery)",
+      "kind": "unit"
+    },
+    {
+      "id": "integration-create-live",
+      "description": "Create a remote MCP integration and verify it persisted (exercises the lean-dropped integrations tools via discovery)",
+      "kind": "unit"
+    },
+    {
+      "id": "integration-definition-discovery-live",
+      "description": "Discover and explicitly verify an imported API through the universal connection contract without calling upstream",
+      "kind": "unit"
+    },
+    {
+      "id": "custom-domain-live",
+      "description": "Discover and call the custom-domain diagnostics tool (exercises the lean-dropped domains tools via discovery)",
+      "kind": "unit"
+    },
+    {
+      "id": "warehouse-list-live",
+      "description": "Discover and call the warehouse connection listing tool (exercises the lean-dropped warehouse/connections tools via discovery)",
+      "kind": "unit"
+    },
+    {
+      "id": "hosted-credit-camel-free-fallback-live",
+      "description": "Automatically persist camelCode and complete the turn when a hosted model has no credits",
+      "kind": "unit"
+    },
+    {
+      "id": "camel-free-routine-restraint-live",
+      "description": "Complete a routine local fix directly without unnecessary Oracle, Research, Agent, or Explore delegation",
+      "kind": "unit"
+    },
+    {
+      "id": "research-agent-live",
+      "description": "Delegate a multi-source web investigation to the Research agent",
+      "kind": "skill",
+      "runtimeBlocked": "Research is a subagent of the in-DO loop only: the agent runtime has no subagents (routes/agent-mcp.ts excludes Agent, Explore, Research and Oracle) and gives the model its own web_search/web_fetch instead, so there is no Research call to grade."
+    },
+    {
+      "id": "research-known-url-live",
+      "description": "Delegate a supplied external URL to one efficient Research fetch without needless search",
+      "kind": "skill",
+      "runtimeBlocked": "Research is a subagent of the in-DO loop only: the agent runtime has no subagents (routes/agent-mcp.ts excludes Agent, Explore, Research and Oracle) and gives the model its own web_search/web_fetch instead, so there is no Research call to grade."
+    },
+    {
+      "id": "orders-analytics-api-live",
+      "description": "Build and deploy an order-tracking app whose API math the harness verifies live",
+      "kind": "skill",
+      "realDeploy": true,
+      "tier": "hard"
+    },
+    {
+      "id": "broken-app-rescue-live",
+      "description": "Diagnose and fix a seeded broken app (build, logic, display defects) and redeploy it",
+      "kind": "skill",
+      "realDeploy": true,
+      "tier": "hard"
+    },
+    {
+      "id": "output-file-delivery-live",
+      "description": "Generate a spreadsheet from an uploaded CSV and deliver it as a downloadable file in workspace outputs",
+      "kind": "skill"
+    },
+    {
+      "id": "zip-upload-project-import-live",
+      "description": "Inspect an uploaded ZIP safely and extract its reviewed contents into an existing DO-backed project",
+      "kind": "skill"
+    },
+    {
+      "id": "analysis-tools-reachable-live",
+      "description": "Reach the analysis sandbox by name without a not-found dead end, and report ground-truth totals",
+      "kind": "unit"
+    },
+    {
+      "id": "metrics-ground-truth-notebook-live",
+      "description": "Analyze a seeded CSV with explicit provenance, avoid deployment, and report findings checked against computed ground truth",
+      "kind": "skill",
+      "tier": "hard"
+    }
+  ]
+}

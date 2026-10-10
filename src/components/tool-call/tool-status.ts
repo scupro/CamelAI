@@ -1,0 +1,68 @@
+import type { ToolResultBlock, ToolUseBlock } from '@/types';
+import { isSubAgentTool } from './tool-utils';
+
+export type ToolStatus = 'running' | 'complete' | 'error';
+
+export function ratchetToolStatus(previous: ToolStatus | undefined, next: ToolStatus): ToolStatus {
+  if ((previous === 'complete' || previous === 'error') && next === 'running') {
+    return previous;
+  }
+  return next;
+}
+
+export function ratchetToolStatusForIdentity(
+  previousStatus: ToolStatus | undefined,
+  previousIdentity: string | undefined,
+  nextStatus: ToolStatus,
+  nextIdentity: string
+): ToolStatus {
+  if (previousIdentity !== nextIdentity) {
+    return nextStatus;
+  }
+  return ratchetToolStatus(previousStatus, nextStatus);
+}
+
+function isFailedToolResult(result?: ToolResultBlock): boolean {
+  return Boolean(
+    result &&
+      (
+        result.is_error === true ||
+        (result as { status?: unknown }).status === 'failed'
+      )
+  );
+}
+
+export function getToolStatus(
+  tool?: ToolUseBlock,
+  result?: ToolResultBlock,
+  results?: ToolResultBlock[],
+  agentContinued?: boolean,
+  isStreaming?: boolean
+): ToolStatus {
+  if (isSubAgentTool(tool?.name)) {
+    const finalResult = results?.find(block => !block.isTaskUpdate) ??
+      (result && !result.isTaskUpdate ? result : undefined);
+    if (isFailedToolResult(finalResult)) return 'error';
+    if (finalResult) return 'complete';
+    // Live sub-agent progress is projected as a temporary tool_result so the
+    // card can render its activity. It is not the terminal result and must not
+    // make the parent look complete while the child is still working.
+    if (results?.some(block => block.isTaskUpdate) && isStreaming !== false) {
+      return 'running';
+    }
+    if (agentContinued) return 'complete';
+    if (isStreaming === false) return 'complete';
+    return 'running';
+  }
+
+  if (isFailedToolResult(result)) return 'error';
+  if (result) return 'complete';
+  // No result object, but the agent produced content after this tool call —
+  // the tool must have completed since the agent can't continue without its result.
+  if (agentContinued) return 'complete';
+  // A finalized assistant message cannot still have live tool work. This also
+  // covers Pi preview tool-call rows whose final tool result used a different
+  // execution id.
+  if (isStreaming === false) return 'complete';
+  return 'running';
+}

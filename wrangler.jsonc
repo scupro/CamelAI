@@ -1,9 +1,12 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "CamelAI",
+  // Free Tier 版：僅保留 D1 + KV + AI + Durable Objects
+  // 已移除：containers（付費）、R2、queues、analytics_engine、browser、images、
+  //        worker_loaders、send_email、tail_consumers、observability、workflows
+  "name": "camelai",
   "main": "workers/main/src/index.ts",
   "compatibility_date": "2026-03-24",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "rules": [
     { "type": "Text", "globs": ["**/*.md"], "fallthrough": true }
   ],
@@ -13,18 +16,9 @@
     "remote": true
   },
   "kv_namespaces": [
-    {
-      "binding": "SESSIONS",
-      "id": "f5ab08fdb1d7404fbc45a171217b4a27"
-    },
-    {
-      "binding": "APP_KV",
-      "id": "e894eb2caf1641ad8870da994b992fce"
-    },
-    {
-      "binding": "EMAIL_TO_USER",
-      "id": "ab267c4f44b847dda8bdca400a4e1884"
-    }
+    { "binding": "SESSIONS", "id": "f5ab08fdb1d7404fbc45a171217b4a27" },
+    { "binding": "APP_KV", "id": "e894eb2caf1641ad8870da994b992fce" },
+    { "binding": "EMAIL_TO_USER", "id": "ab267c4f44b847dda8bdca400a4e1884" }
   ],
   "d1_databases": [
     {
@@ -34,30 +28,38 @@
       "migrations_dir": "migrations"
     }
   ],
-  "queues": {
-    "producers": [],
-    "consumers": []
-  },
   "durable_objects": {
     "bindings": [
-      {
-        "name": "CHAT_THREAD",
-        "class_name": "ChatThreadDO"
-      },
-      {
-        "name": "USER",
-        "class_name": "UserDO"
-      },
-      {
-        "name": "WORKSPACE_FS",
-        "class_name": "WorkspaceFilesystemDO"
-      }
+      { "name": "CHAT_THREAD", "class_name": "ChatThreadDO" },
+      { "name": "USER", "class_name": "UserDO" },
+      { "name": "SIGNUP", "class_name": "SignupDO" },
+      { "name": "ORG", "class_name": "OrgDO" },
+      { "name": "EMAIL_HANDLE", "class_name": "EmailHandleDO" },
+      { "name": "TELEGRAM_REGISTRY", "class_name": "TelegramRegistryDO" },
+      { "name": "SLACK_TEAM_REGISTRY", "class_name": "SlackTeamRegistryDO" },
+      { "name": "WORKSPACE", "class_name": "WorkspaceDO" },
+      { "name": "WORKSPACE_CRON", "class_name": "WorkspaceCronDO" },
+      { "name": "WORKER_LOGS", "class_name": "WorkerLogsDO" },
+      { "name": "WORKSPACE_FS", "class_name": "WorkspaceFilesystemDO" }
     ]
   },
+  // 全新部署（無既有 DO 狀態），以單一新 tag 宣告所有類別
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["ChatDurableObject"]
+      "new_sqlite_classes": [
+        "ChatThreadDO",
+        "UserDO",
+        "SignupDO",
+        "OrgDO",
+        "EmailHandleDO",
+        "TelegramRegistryDO",
+        "SlackTeamRegistryDO",
+        "WorkspaceDO",
+        "WorkspaceCronDO",
+        "WorkerLogsDO",
+        "WorkspaceFilesystemDO"
+      ]
     }
   ]
 }

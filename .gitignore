@@ -9,3 +9,8 @@ build/
 DEPLOY_KEY.md
 camelai-deploy-key
 camelai-deploy-key.pub
+
+# build outputs
+build/
+dist/
+.cache/

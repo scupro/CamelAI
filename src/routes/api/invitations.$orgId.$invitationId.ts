@@ -1,0 +1,125 @@
+import type { Route } from './+types/invitations.$orgId.$invitationId';
+import { getEnv } from '@/lib/cloudflare.server';
+import { getAuthEnv } from '@/lib/auth-helpers';
+import { getSession } from '@/lib/auth.server';
+import { createSessionCookieHeader } from '@/lib/cookies.server';
+import {
+  acceptInvitation,
+  getInvitation,
+  listOrgWorkspaces,
+  switchSessionOrg,
+} from '@/lib/auth-do';
+import { requireAccessMappedOrg } from '@/lib/cloudflare-access-auth.server';
+
+export async function loader({ params, context }: Route.LoaderArgs) {
+  try {
+    const orgId = params.orgId;
+    const invitationId = params.invitationId;
+
+    if (!orgId || !invitationId) {
+      return Response.json({ error: 'Organization ID and invitation ID are required' }, { status: 400 });
+    }
+
+    const env = getEnv(context);
+    const authEnv = getAuthEnv(env);
+    const invitation = await getInvitation(authEnv, orgId, invitationId);
+
+    if (!invitation) {
+      return Response.json({ error: 'Invitation not found' }, { status: 404 });
+    }
+
+    return Response.json({
+      email: invitation.email,
+      role: invitation.role,
+      org: {
+        id: invitation.org.id,
+        name: invitation.org.name,
+      },
+    });
+  } catch (error) {
+    console.error('Load invitation error:', error);
+    return Response.json({ error: 'Failed to load invitation' }, { status: 500 });
+  }
+}
+
+export async function action({ request, context, params }: Route.ActionArgs) {
+  if (request.method !== 'POST') {
+    return Response.json({ error: 'Method not allowed' }, { status: 405 });
+  }
+
+  try {
+    const orgId = params.orgId;
+    const invitationId = params.invitationId;
+
+    if (!orgId || !invitationId) {
+      return Response.json({ error: 'Organization ID and invitation ID are required' }, { status: 400 });
+    }
+
+    const env = getEnv(context);
+    const authEnv = getAuthEnv(env);
+
+    const sessionContext = await getSession(request, context);
+    if (!sessionContext) {
+      return Response.json({ error: 'Not authenticated' }, { status: 401 });
+    }
+    const session = sessionContext.session;
+
+    const invitation = await getInvitation(authEnv, orgId, invitationId);
+    if (!invitation) {
+      return Response.json({ error: 'Invitation not found' }, { status: 404 });
+    }
+
+    const user = await authEnv.USER.get(
+      authEnv.USER.idFromName(session.user_id)
+    ).getProfile();
+    if (!user) {
+      return Response.json({ error: 'Not authenticated' }, { status: 401 });
+    }
+
+    if (user.email.toLowerCase() !== invitation.email.toLowerCase()) {
+      return Response.json({ error: 'Invitation email does not match current user' }, { status: 403 });
+    }
+
+    // Reject before mutating: accepting an invite to an org outside the live
+    // Access identity would create a membership the user can never use.
+    const accessDenied = await requireAccessMappedOrg(request, env, session, orgId);
+    if (accessDenied) return accessDenied;
+
+    const accepted = await acceptInvitation(authEnv, orgId, invitationId, session.user_id);
+    if (!accepted) {
+      return Response.json({ error: 'Invitation not found' }, { status: 404 });
+    }
+
+    const workspaces = await listOrgWorkspaces(authEnv, orgId);
+    const workspaceId = workspaces[0]?.id ?? null;
+
+    // Re-sign session with new org and return updated cookie
+    const currentSessionData = {
+      user_id: session.user_id,
+      org_id: session.org_id,
+      workspace_id: session.workspace_id,
+      created_at: session.created_at,
+      last_accessed: session.created_at,
+      expires_at: session.expires_at,
+      sso_connection_id: session.sso_connection_id,
+      sso_config_version: session.sso_config_version,
+      user_name: session.user_name,
+      user_email: session.user_email,
+      auth_source: session.auth_source ?? null,
+    };
+    const signedToken = await switchSessionOrg(authEnv, currentSessionData, orgId, workspaceId);
+
+    return Response.json(
+      {
+        success: true,
+        org: { id: invitation.org.id, name: invitation.org.name },
+        workspace: workspaceId ? { id: workspaceId } : null,
+      },
+      { headers: { 'Set-Cookie': createSessionCookieHeader(signedToken, request) } }
+    );
+  } catch (error) {
+    if (error instanceof Response) return error;
+    console.error('Accept invitation error:', error);
+    return Response.json({ error: 'Failed to accept invitation' }, { status: 500 });
+  }
+}

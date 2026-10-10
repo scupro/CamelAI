@@ -1,0 +1,1133 @@
+import type { AppLoadContext } from "react-router";
+import { getEnv, type CloudflareEnv } from "./cloudflare.server";
+import type {
+  Thread,
+  PaginatedResult,
+  PaginationParams,
+  LlmProvider,
+  LlmModel,
+  Organization,
+  OrgModelPickerConfig,
+  PreviewTarget,
+  WorkspaceModelPickerConfig,
+} from "@/types";
+import {
+  generateThreadTitleWithOpenAI,
+} from "./thread-title-generation.server";
+import { OrgDO, type OrgThread } from "../../workers/main/src/auth";
+import type { ThreadRuntimeRecord } from "../../workers/main/src/identity/org-do";
+import { WorkspaceDO } from "../../workers/main/src/workspace";
+import {
+  CAMEL_CODE_LLM_MODEL,
+  CUSTOM_LLM_MODEL,
+  type CustomLlmProviderApi,
+  type LlmProviderConfigRecord,
+  getDefaultLlmModel,
+  getStoredCustomLlmProviderApi,
+  getStoredCustomLlmProviderModelId,
+  getStoredBedrockAwsRegion,
+  isLlmModelCoveredByByokProvider,
+  isLlmModelCoveredByOpenAiSubscription,
+  isLlmModelAllowedForNewThread,
+  isLlmModel,
+  normalizeLlmModel,
+} from "./llm-provider-config";
+import { getEffectiveLlmProviderConfig } from "./selfhost-ai-provider";
+import { isSelfhostRuntime } from "./selfhost-runtime";
+import {
+  MODEL_CATALOG,
+  resolveModelPickerCatalog,
+} from "./model-catalog";
+import {
+  deriveHostedCreditPause,
+  findCheapestSelectableModel,
+  type HostedCreditPauseBilling,
+  type ModelPausedReason,
+  type ModelPickerOption,
+} from "./model-picker-access";
+export type {
+  ModelPausedReason,
+  ModelPickerOption,
+} from "./model-picker-access";
+import { parseChannelIndicatorKindsJson } from "./channel-kinds";
+import {
+  resolveDefaultModelForChat,
+  resolveEffectivePickerConfig,
+} from "./model-picker-config";
+import { retryTransientDurableObjectRead } from "./do-rpc-retry.server";
+import { truncateThreadPreviewText } from "./thread-preview";
+import {
+  THREAD_LIST_PREVIEW_LENGTH,
+  type MirroredThreadRow,
+} from "../../workers/main/src/app-index-db";
+import {
+  d1ReadMode,
+  diffById,
+  recordShadowComparison,
+  safeMirrorRead,
+} from "./d1-read-shadow.server";
+import {
+  buildThreadSearchMatch,
+  parseThreadSearchTerms,
+} from "./thread-search";
+import { getThreadTitleSourceMessage } from "./thread-title";
+import type { ThreadProjectActivity } from "./thread-project-activity";
+import {
+  isOrgBillingAccessReady,
+  resolveOrgBillingAccess,
+  type OrgBillingAccessState,
+} from "./billing.server";
+
+interface ParsedThreadMessage {
+  id: string;
+  thread_id: string;
+  role: "user" | "assistant";
+  content: unknown;
+  created_at: number;
+  forkEntryId?: string;
+  sentDuringStreaming?: boolean;
+  isMeta?: boolean;
+  sourceToolUseID?: string;
+  isCompactSummary?: boolean;
+}
+
+export interface RawThreadCreator {
+  created_by: string;
+  thread_count: number;
+  latest_updated_at: number;
+}
+
+interface KnownOrgOptions {
+  orgId?: string;
+}
+
+interface ModelPickerStateOptions extends KnownOrgOptions {
+  llmProviderConfig?: LlmProviderConfigRecord | null;
+  orgBillingState?: Pick<
+    Organization,
+    | "billing_status"
+    | "billing_credit_purchase_total_cents"
+    | "billing_credit_grant_total_cents"
+  > | null;
+}
+
+export function normalizeStoredThreadModel(
+  rawModel: unknown,
+): { model: LlmModel } {
+  return { model: normalizeLlmModel(rawModel) };
+}
+
+function normalizeRuntimeThreadModel(
+  env: CloudflareEnv,
+  rawModel: unknown,
+): LlmModel {
+  if (!isSelfhostRuntime(env)) {
+    return normalizeStoredThreadModel(rawModel).model;
+  }
+  const providerConfig = getEffectiveLlmProviderConfig(env, null);
+  return normalizeLlmModel(rawModel, providerConfig?.provider, {
+    customApi: getStoredCustomLlmProviderApi(providerConfig),
+    customModelId: getStoredCustomLlmProviderModelId(providerConfig),
+    awsRegion: getStoredBedrockAwsRegion(providerConfig),
+    allowCamelCode: false,
+  });
+}
+
+// Full thread records are used by single-thread loaders and new-thread
+// transcript hydration, so canonical message metadata must remain unbounded.
+function toThread(env: CloudflareEnv, orgThread: OrgThread): Thread {
+  const model = normalizeRuntimeThreadModel(env, orgThread.model);
+  return {
+    id: orgThread.id,
+    workspace_id: orgThread.workspace_id,
+    title: orgThread.title,
+    created_by: orgThread.created_by,
+    model,
+    created_at: orgThread.created_at,
+    updated_at: orgThread.updated_at,
+    user_message_count: orgThread.user_message_count ?? 0,
+    first_user_message: orgThread.first_user_message ?? null,
+    last_user_message: orgThread.last_user_message ?? null,
+    last_user_message_at: orgThread.last_user_message_at ?? null,
+    last_assistant_completed_at: orgThread.last_assistant_completed_at ?? null,
+    last_assistant_summary: orgThread.last_assistant_summary ?? null,
+    last_assistant_summary_status:
+      orgThread.last_assistant_summary_status ?? null,
+    source: orgThread.source ?? "web",
+    channel_kind: orgThread.channel_kind ?? null,
+    channel_kinds: parseChannelIndicatorKindsJson(orgThread.channel_kinds),
+    channel_connection_id: orgThread.channel_connection_id ?? null,
+    channel_conversation_id: orgThread.channel_conversation_id ?? null,
+    channel_message_id: orgThread.channel_message_id ?? null,
+  };
+}
+
+// List and history surfaces should not serialize full prompt text. Keep this
+// mapper separate from toThread so transcript hydration keeps full metadata.
+function toThreadListPreview(
+  env: CloudflareEnv,
+  orgThread: OrgThread,
+): Thread {
+  const thread = toThread(env, orgThread);
+  return {
+    ...thread,
+    first_user_message: truncateThreadPreviewText(thread.first_user_message, 500),
+    last_user_message: truncateThreadPreviewText(thread.last_user_message, 500),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Thread lists from the D1 mirror (phase 2, D1_READ_SHADOW / D1_READ_SERVE
+// "threadLists"; off by default). Searches always go to the OrgDO.
+// ---------------------------------------------------------------------------
+
+function mirroredRowToOrgThread(row: MirroredThreadRow): OrgThread {
+  return {
+    id: row.id,
+    workspace_id: row.workspace_id,
+    title: row.title ?? "",
+    created_by: row.created_by ?? "",
+    model: row.model as OrgThread["model"],
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    user_message_count: row.user_message_count ?? 0,
+    first_user_message: row.first_user_message_preview,
+    last_user_message: row.last_user_message_preview,
+    last_user_message_at: row.last_user_message_at,
+    last_assistant_completed_at: row.last_assistant_completed_at,
+    last_assistant_summary: row.last_assistant_summary,
+    last_assistant_summary_status:
+      row.last_assistant_summary_status as OrgThread["last_assistant_summary_status"],
+    source: row.source ?? "web",
+    channel_kind: row.channel_kind,
+    channel_kinds: row.channel_kinds,
+    channel_connection_id: row.channel_connection_id,
+    channel_conversation_id: row.channel_conversation_id,
+    channel_message_id: row.channel_message_id,
+  } as OrgThread;
+}
+
+const THREAD_SHADOW_FIELDS = [
+  "title",
+  "created_by",
+  "model",
+  "updated_at",
+  "user_message_count",
+  "first_user_message",
+  "last_user_message",
+  "last_assistant_completed_at",
+  "last_assistant_summary_status",
+] as const;
+
+function threadShadowFields(thread: OrgThread): Record<string, unknown> {
+  return {
+    title: thread.title ?? "",
+    created_by: thread.created_by ?? "",
+    model: thread.model,
+    updated_at: thread.updated_at,
+    user_message_count: thread.user_message_count ?? 0,
+    first_user_message: truncateThreadPreviewText(thread.first_user_message ?? null, THREAD_LIST_PREVIEW_LENGTH),
+    last_user_message: truncateThreadPreviewText(thread.last_user_message ?? null, THREAD_LIST_PREVIEW_LENGTH),
+    last_assistant_completed_at: thread.last_assistant_completed_at ?? null,
+    last_assistant_summary_status: thread.last_assistant_summary_status ?? null,
+  };
+}
+
+function compareThreadLists(
+  env: CloudflareEnv,
+  primary: OrgThread[],
+  mirror: MirroredThreadRow[],
+  extra: string[],
+  ids: { workspaceId?: string | null },
+): void {
+  const mismatches = [...extra];
+  if (primary.map((thread) => thread.id).join() !== mirror.map((row) => row.id).join()) {
+    const primaryIds = new Set(primary.map((thread) => thread.id));
+    const sameSet = mirror.length === primary.length && mirror.every((row) => primaryIds.has(row.id));
+    if (sameSet) mismatches.push("order");
+  }
+  mismatches.push(
+    ...diffById(
+      new Map(primary.map((thread) => [thread.id, threadShadowFields(thread)])),
+      new Map(mirror.map((row) => [row.id, threadShadowFields(mirroredRowToOrgThread(row))])),
+      [...THREAD_SHADOW_FIELDS],
+    ),
+  );
+  recordShadowComparison(env, "threadLists", mismatches, ids);
+}
+
+async function threadPageWithMirror(
+  env: CloudflareEnv,
+  workspaceIds: string[],
+  params: PaginationParams,
+  loadFromDurableObject: () =>
+    | Promise<{ items: OrgThread[]; total: number; offset: number; limit: number }>
+    | { items: OrgThread[]; total: number; offset: number; limit: number },
+): Promise<{ items: OrgThread[]; total: number; offset: number; limit: number }> {
+  const mode = params.searchQuery?.trim() ? "do" : d1ReadMode(env, "threadLists");
+  if (mode === "do") return loadFromDurableObject();
+  // Same clamping as OrgDO.getThreadsPaginated.
+  const offset = Math.max(0, Math.floor(params.offset ?? 0));
+  const limit = Math.max(1, Math.min(200, Math.floor(params.limit ?? 50)));
+  const mirrorRead = safeMirrorRead(env, "threadLists", (db) =>
+    db.getMirroredThreadPage({ workspaceIds, createdBy: params.createdBy, offset, limit }),
+  );
+  if (mode === "d1") {
+    const mirrored = await mirrorRead;
+    if (mirrored) {
+      return { items: mirrored.items.map(mirroredRowToOrgThread), total: mirrored.total, offset, limit };
+    }
+    return loadFromDurableObject();
+  }
+  const result = await loadFromDurableObject();
+  const mirrored = await mirrorRead;
+  if (mirrored) {
+    compareThreadLists(
+      env,
+      result.items,
+      mirrored.items,
+      mirrored.total === result.total ? [] : ["total"],
+      { workspaceId: workspaceIds.length === 1 ? workspaceIds[0] : null },
+    );
+  }
+  return result;
+}
+
+// Helper to get workspace info and org ID
+async function getWorkspaceInfo(
+  env: CloudflareEnv,
+  workspaceId: string,
+): Promise<{ org_id: string } | null> {
+  const wsStub = env.WORKSPACE.get(
+    env.WORKSPACE.idFromName(workspaceId),
+  ) as unknown as WorkspaceDO;
+  const info = await retryTransientDurableObjectRead("WorkspaceDO.getInfo", () =>
+    wsStub.getInfo(),
+  );
+  if (!info) return null;
+  return { org_id: info.org_id };
+}
+
+export interface WorkspaceModelPickerState {
+  orgId: string;
+  llmProvider: LlmProvider | null;
+  customApi: CustomLlmProviderApi | null;
+  customModelId: string | null;
+  awsRegion: string | null;
+  allowOpenAiSubscription: boolean;
+  billingAccessMode: Extract<
+    OrgBillingAccessState,
+    { kind: "ready" }
+  >["mode"] | null;
+  modelOptions: ModelPickerOption[];
+  allowedThreadModels: LlmModel[];
+  effectivePickerDefaultModel: LlmModel | null;
+  hasEffectivePickerDefault: boolean;
+  defaultModel: LlmModel | null;
+  canUnlockPremiumModels: boolean;
+  hostedCreditsPaused: { reason: ModelPausedReason } | null;
+  modelPickerSettingsHref: string;
+}
+
+const UNLOCKABLE_CATALOG_IDS = (
+  Object.keys(MODEL_CATALOG) as LlmModel[]
+).filter(
+  (id) =>
+    id !== CUSTOM_LLM_MODEL &&
+    id !== CAMEL_CODE_LLM_MODEL,
+);
+
+export function isBillingLockedModel(
+  modelId: LlmModel,
+  args: { isFreeMode: boolean; allowOpenAiSubscription: boolean },
+): boolean {
+  if (!args.isFreeMode || modelId === CAMEL_CODE_LLM_MODEL) {
+    return false;
+  }
+  return !(
+    args.allowOpenAiSubscription &&
+    isLlmModelCoveredByOpenAiSubscription(modelId)
+  );
+}
+
+export function applyHostedCreditPause(
+  pickerState: WorkspaceModelPickerState,
+  billing: HostedCreditPauseBilling | null,
+): WorkspaceModelPickerState {
+  const pause = deriveHostedCreditPause({
+    modelOptions: pickerState.modelOptions,
+    billingAccessMode: pickerState.billingAccessMode,
+    llmProvider: pickerState.llmProvider,
+    allowOpenAiSubscription: pickerState.allowOpenAiSubscription,
+    billing,
+  });
+  if (!pause.hostedCreditsPaused) {
+    return {
+      ...pickerState,
+      hostedCreditsPaused: null,
+    };
+  }
+
+  const { modelOptions } = pause;
+  const allowedThreadModels = modelOptions
+    .filter((entry) => !entry.locked)
+    .map((entry) => entry.id);
+  const lockedIds = new Set(
+    modelOptions.filter((entry) => entry.locked).map((entry) => entry.id),
+  );
+  const fallbackModel = findCheapestSelectableModel(modelOptions)?.id ?? null;
+  const replaceLockedDefault = (model: LlmModel | null): LlmModel | null =>
+    model && lockedIds.has(model) ? fallbackModel ?? model : model;
+
+  return {
+    ...pickerState,
+    modelOptions,
+    allowedThreadModels,
+    effectivePickerDefaultModel: replaceLockedDefault(
+      pickerState.effectivePickerDefaultModel,
+    ),
+    defaultModel: replaceLockedDefault(pickerState.defaultModel),
+    hostedCreditsPaused: pause.hostedCreditsPaused,
+  };
+}
+
+async function readOrgModelPickerConfig(
+  orgStub: OrgDO,
+): Promise<OrgModelPickerConfig> {
+  return retryTransientDurableObjectRead("OrgDO.getModelPickerConfig", () =>
+    Promise.resolve(orgStub.getModelPickerConfig()),
+  );
+}
+
+async function readWorkspaceModelPickerConfig(
+  wsStub: WorkspaceDO,
+): Promise<WorkspaceModelPickerConfig> {
+  return retryTransientDurableObjectRead(
+    "WorkspaceDO.getModelPickerConfig",
+    () => Promise.resolve(wsStub.getModelPickerConfig()),
+  );
+}
+
+export async function getWorkspaceModelPickerState(
+  context: AppLoadContext,
+  workspaceId: string,
+  options: ModelPickerStateOptions = {},
+): Promise<WorkspaceModelPickerState | null> {
+  const env = getEnv(context);
+  let orgId = options.orgId;
+  if (!orgId) {
+    const wsInfo = await getWorkspaceInfo(env, workspaceId);
+    if (!wsInfo) return null;
+    orgId = wsInfo.org_id;
+  }
+
+  return getWorkspaceModelPickerStateForOrg(context, orgId, workspaceId, options);
+}
+
+async function getWorkspaceModelPickerStateForOrg(
+  context: AppLoadContext,
+  orgId: string,
+  workspaceId: string,
+  options: ModelPickerStateOptions = {},
+): Promise<WorkspaceModelPickerState> {
+  const env = getEnv(context);
+  const orgStub = getOrgStub(env, orgId);
+  const wsStub = env.WORKSPACE.get(
+    env.WORKSPACE.idFromName(workspaceId),
+  ) as unknown as WorkspaceDO;
+  const orgInfoPromise =
+    options.orgBillingState !== undefined
+      ? Promise.resolve(options.orgBillingState)
+      : typeof orgStub.getInfo === "function"
+        ? retryTransientDurableObjectRead("OrgDO.getInfo", () =>
+            Promise.resolve(orgStub.getInfo()),
+          )
+        : Promise.resolve(null);
+  const [llmProviderConfig, openAiSubscription, orgInfo] = await Promise.all([
+    options.llmProviderConfig !== undefined
+      ? Promise.resolve(options.llmProviderConfig)
+      : retryTransientDurableObjectRead("OrgDO.getLlmProviderConfig", () =>
+          Promise.resolve(orgStub.getLlmProviderConfig()),
+        ),
+    typeof orgStub.getOpenAiSubscription === "function"
+      ? Promise.resolve(orgStub.getOpenAiSubscription())
+      : Promise.resolve(null),
+    orgInfoPromise,
+  ]);
+  const allowOpenAiSubscription = openAiSubscription !== null;
+  const effectiveLlmProviderConfig = getEffectiveLlmProviderConfig(
+    env,
+    llmProviderConfig,
+  );
+  const customApi = getStoredCustomLlmProviderApi(effectiveLlmProviderConfig);
+  const customModelId = getStoredCustomLlmProviderModelId(effectiveLlmProviderConfig);
+  const awsRegion = getStoredBedrockAwsRegion(effectiveLlmProviderConfig);
+  const [orgPickerConfig, workspacePickerConfig] = await Promise.all([
+    readOrgModelPickerConfig(orgStub),
+    readWorkspaceModelPickerConfig(wsStub),
+  ]);
+  const effectiveConfig = resolveEffectivePickerConfig(
+    orgPickerConfig,
+    workspacePickerConfig,
+  );
+  const resolvedBillingAccess = resolveOrgBillingAccess({
+    env,
+    org: orgInfo,
+    llmProviderConfig: effectiveLlmProviderConfig,
+  });
+  const billingAccessMode = isOrgBillingAccessReady(resolvedBillingAccess)
+    ? resolvedBillingAccess.mode
+    : null;
+  const isFreeMode = billingAccessMode === "camel_free";
+  const resolvedCatalog = resolveModelPickerCatalog({
+    effectiveConfig,
+    orgProvider: effectiveLlmProviderConfig?.provider,
+    customApi,
+    customModelId,
+    awsRegion,
+    allowOpenAiSubscription,
+    allowCamelCode: billingAccessMode !== "selfhost",
+  });
+  const isCustomPicker = effectiveConfig.use_platform_defaults === false;
+  const visibleCatalog =
+    isFreeMode &&
+    !isCustomPicker &&
+    !resolvedCatalog.some((entry) => entry.id === CAMEL_CODE_LLM_MODEL)
+      ? [MODEL_CATALOG[CAMEL_CODE_LLM_MODEL], ...resolvedCatalog]
+      : resolvedCatalog;
+  const modelOptions: ModelPickerOption[] = visibleCatalog.map((entry) => {
+    if (
+      !isBillingLockedModel(entry.id, {
+        isFreeMode,
+        allowOpenAiSubscription,
+      })
+    ) {
+      return entry;
+    }
+    return {
+      ...entry,
+      locked: true,
+      unlockHint: isLlmModelCoveredByOpenAiSubscription(entry.id)
+        ? "openai"
+        : "generic",
+    };
+  });
+  const selectableCatalog = modelOptions.filter((entry) => !entry.locked);
+  const hasNonCamelCodeUnlocked = modelOptions.some(
+    (entry) => !entry.locked && entry.id !== CAMEL_CODE_LLM_MODEL,
+  );
+  const visibleModelOptions = hasNonCamelCodeUnlocked
+    ? modelOptions.filter((entry) => !entry.locked)
+    : modelOptions;
+  const unlockedIds = new Set(selectableCatalog.map((entry) => entry.id));
+  const canUnlockPremiumModels =
+    (billingAccessMode === "camel_free" || billingAccessMode === "byok") &&
+    UNLOCKABLE_CATALOG_IDS.some(
+      (id) =>
+        !unlockedIds.has(id) &&
+        !(
+          billingAccessMode === "byok" &&
+          isLlmModelCoveredByByokProvider(
+            id,
+            effectiveLlmProviderConfig?.provider,
+          )
+        ),
+    );
+  const configuredDefault = effectiveConfig.default_model;
+  const configuredDefaultIsLocked = modelOptions.some(
+    (entry) => entry.id === configuredDefault && entry.locked,
+  );
+  const fallbackModel = findCheapestSelectableModel(modelOptions)?.id ?? null;
+  const effectivePickerDefaultModel = configuredDefaultIsLocked
+    ? fallbackModel ?? configuredDefault
+    : configuredDefault;
+  const defaultModel = resolveDefaultModelForChat({
+    effectiveDefaultModel: effectivePickerDefaultModel,
+    fallbackModel: isFreeMode
+      ? CAMEL_CODE_LLM_MODEL
+      : getDefaultLlmModel(effectiveLlmProviderConfig?.provider, {
+          customApi,
+          customModelId,
+          awsRegion,
+        }),
+    visibleCatalog: selectableCatalog,
+  });
+
+  return {
+    orgId,
+    llmProvider: (effectiveLlmProviderConfig?.provider ?? null) as LlmProvider | null,
+    customApi,
+    customModelId,
+    awsRegion,
+    allowOpenAiSubscription,
+    billingAccessMode,
+    modelOptions: visibleModelOptions,
+    allowedThreadModels: selectableCatalog.map((entry) => entry.id),
+    effectivePickerDefaultModel,
+    hasEffectivePickerDefault: effectivePickerDefaultModel !== null,
+    defaultModel,
+    canUnlockPremiumModels,
+    hostedCreditsPaused: null,
+    modelPickerSettingsHref:
+      effectiveConfig.source === "workspace"
+        ? `/settings/organization/models?scope=ws&workspaceId=${encodeURIComponent(workspaceId)}`
+        : "/settings/organization/models",
+  };
+}
+
+async function resolveCreateThreadModel(
+  context: AppLoadContext,
+  workspaceId: string,
+  requestedModel?: unknown,
+  knownOrgId?: string,
+): Promise<{ orgId: string; model: LlmModel }> {
+  const pickerState = knownOrgId
+    ? await getWorkspaceModelPickerStateForOrg(context, knownOrgId, workspaceId)
+    : await getWorkspaceModelPickerState(context, workspaceId);
+  if (!pickerState || pickerState.allowedThreadModels.length === 0) {
+    throw new Error("No models are available");
+  }
+
+  const selectedModel =
+    requestedModel == null
+      ? pickerState.defaultModel
+      : requestedModel;
+  if (!selectedModel) {
+    throw new Error("No models are available");
+  }
+  if (
+    !isLlmModel(selectedModel) ||
+    !isLlmModelAllowedForNewThread(
+      selectedModel,
+      pickerState.llmProvider,
+      {
+        customApi: pickerState.customApi,
+        customModelId: pickerState.customModelId,
+        awsRegion: pickerState.awsRegion,
+        allowOpenAiSubscription: pickerState.allowOpenAiSubscription,
+      },
+    ) ||
+    !pickerState.allowedThreadModels.includes(selectedModel)
+  ) {
+    throw new Error("Invalid thread model");
+  }
+
+  return { orgId: pickerState.orgId, model: selectedModel };
+}
+
+// Helper to get OrgDO stub
+function getOrgStub(env: CloudflareEnv, orgId: string): OrgDO {
+  return env.ORG.get(env.ORG.idFromName(orgId)) as unknown as OrgDO;
+}
+
+export async function getThreads(
+  context: AppLoadContext,
+  workspaceId: string,
+): Promise<Thread[]> {
+  const env = getEnv(context);
+  const wsInfo = await getWorkspaceInfo(env, workspaceId);
+  if (!wsInfo) return [];
+  const orgStub = env.ORG.get(env.ORG.idFromName(wsInfo.org_id));
+  const threads = await orgStub.getThreadsByWorkspace(workspaceId);
+  return threads.map((t) => toThreadListPreview(env, t));
+}
+
+export async function getThreadsPaginated(
+  context: AppLoadContext,
+  workspaceId: string,
+  params: PaginationParams = {},
+  options: KnownOrgOptions = {},
+): Promise<PaginatedResult<Thread>> {
+  const env = getEnv(context);
+  const offset = params.offset ?? 0;
+  const limit = params.limit ?? 50;
+  let orgId = options.orgId;
+  if (!orgId) {
+    const wsInfo = await getWorkspaceInfo(env, workspaceId);
+    if (!wsInfo) {
+      return { items: [], total: 0, offset, limit };
+    }
+    orgId = wsInfo.org_id;
+  }
+  const orgStub = getOrgStub(env, orgId);
+  const result = await threadPageWithMirror(env, [workspaceId], params, () =>
+    orgStub.getThreadsPaginated(
+      offset,
+      limit,
+      workspaceId,
+      params.createdBy,
+      params.searchQuery,
+    ),
+  );
+  const searchTerms = parseThreadSearchTerms(params.searchQuery);
+  return {
+    items: result.items.map((thread) => {
+      const preview = toThreadListPreview(env, thread);
+      return searchTerms.length > 0
+        ? {
+            ...preview,
+            search_match: buildThreadSearchMatch(thread, searchTerms),
+          }
+        : preview;
+    }),
+    total: result.total,
+    offset: result.offset,
+    limit: result.limit,
+  };
+}
+
+export async function getThreadsPaginatedAllWorkspaces(
+  context: AppLoadContext,
+  workspaceIds: string[],
+  params: PaginationParams = {},
+  options: KnownOrgOptions = {},
+): Promise<PaginatedResult<Thread>> {
+  const env = getEnv(context);
+  const offset = params.offset ?? 0;
+  const limit = params.limit ?? 50;
+  if (workspaceIds.length === 0) {
+    return { items: [], total: 0, offset, limit };
+  }
+  let orgId = options.orgId;
+  if (!orgId) {
+    const wsInfo = await getWorkspaceInfo(env, workspaceIds[0]);
+    if (!wsInfo) {
+      return { items: [], total: 0, offset, limit };
+    }
+    orgId = wsInfo.org_id;
+  }
+  const orgStub = getOrgStub(env, orgId);
+  const result = await threadPageWithMirror(env, workspaceIds, params, () =>
+    orgStub.getThreadsAllWorkspacesPaginated(
+      workspaceIds,
+      offset,
+      limit,
+      params.createdBy,
+      params.searchQuery,
+    ),
+  );
+  const searchTerms = parseThreadSearchTerms(params.searchQuery);
+  return {
+    items: result.items.map((thread) => {
+      const preview = toThreadListPreview(env, thread);
+      return searchTerms.length > 0
+        ? {
+            ...preview,
+            search_match: buildThreadSearchMatch(thread, searchTerms),
+          }
+        : preview;
+    }),
+    total: result.total,
+    offset: result.offset,
+    limit: result.limit,
+  };
+}
+
+export async function getThreadCreators(
+  context: AppLoadContext,
+  workspaceId: string,
+  options: KnownOrgOptions = {},
+): Promise<RawThreadCreator[]> {
+  const env = getEnv(context);
+  let orgId = options.orgId;
+  if (!orgId) {
+    const wsInfo = await getWorkspaceInfo(env, workspaceId);
+    if (!wsInfo) {
+      return [];
+    }
+    orgId = wsInfo.org_id;
+  }
+  const orgStub = getOrgStub(env, orgId);
+  return await orgStub.getThreadCreators(workspaceId);
+}
+
+export async function getThreadCreatorsAllWorkspaces(
+  context: AppLoadContext,
+  workspaceIds: string[],
+  options: KnownOrgOptions = {},
+): Promise<RawThreadCreator[]> {
+  if (workspaceIds.length === 0) {
+    return [];
+  }
+  const env = getEnv(context);
+  let orgId = options.orgId;
+  if (!orgId) {
+    const wsInfo = await getWorkspaceInfo(env, workspaceIds[0]);
+    if (!wsInfo) {
+      return [];
+    }
+    orgId = wsInfo.org_id;
+  }
+  const orgStub = getOrgStub(env, orgId);
+  return await orgStub.getThreadCreatorsAllWorkspaces(workspaceIds);
+}
+
+export async function createThread(
+  context: AppLoadContext,
+  workspaceId: string,
+  title: string | undefined,
+  createdBy?: string,
+  firstUserMessage?: string,
+  model?: unknown,
+): Promise<Thread> {
+  const env = getEnv(context);
+  const { orgId, model: selectedModel } = await resolveCreateThreadModel(
+    context,
+    workspaceId,
+    model,
+  );
+  const orgStub = env.ORG.get(env.ORG.idFromName(orgId));
+  const thread = await orgStub.createThread(
+    workspaceId,
+    title,
+    createdBy,
+    firstUserMessage,
+    selectedModel,
+  );
+  return toThread(env, thread);
+}
+
+export async function createThreadWithValidatedAccess(
+  context: AppLoadContext,
+  orgId: string,
+  workspaceId: string,
+  title: string | undefined,
+  createdBy: string | undefined,
+  firstUserMessage: string | undefined,
+  model?: unknown,
+): Promise<Thread> {
+  const env = getEnv(context);
+  const { model: selectedModel } = await resolveCreateThreadModel(
+    context,
+    workspaceId,
+    model,
+    orgId,
+  );
+  const orgStub = env.ORG.get(env.ORG.idFromName(orgId));
+  const thread = await orgStub.createThread(
+    workspaceId,
+    title,
+    createdBy,
+    firstUserMessage,
+    selectedModel,
+  );
+  return toThread(env, thread);
+}
+
+export async function getRecentThreads(
+  context: AppLoadContext,
+  workspaceId: string,
+  limit = 6,
+  createdBy?: string,
+  options: KnownOrgOptions = {},
+): Promise<Thread[]> {
+  const env = getEnv(context);
+  let orgId = options.orgId;
+  if (!orgId) {
+    const wsInfo = await getWorkspaceInfo(env, workspaceId);
+    if (!wsInfo) return [];
+    orgId = wsInfo.org_id;
+  }
+  const orgStub = env.ORG.get(env.ORG.idFromName(orgId));
+  const result = await orgStub.getThreadsPaginated(
+    0,
+    limit,
+    workspaceId,
+    createdBy,
+  );
+  return result.items.map((t) => toThreadListPreview(env, t));
+}
+
+export async function getThread(
+  context: AppLoadContext,
+  id: string,
+  workspaceId: string,
+  options: KnownOrgOptions = {},
+): Promise<Thread | null> {
+  const env = getEnv(context);
+  let orgId = options.orgId;
+  if (!orgId) {
+    const wsInfo = await getWorkspaceInfo(env, workspaceId);
+    if (!wsInfo) return null;
+    orgId = wsInfo.org_id;
+  }
+  const orgStub = env.ORG.get(env.ORG.idFromName(orgId));
+  const thread = await retryTransientDurableObjectRead("OrgDO.getThread", () =>
+    orgStub.getThread(id),
+  );
+  if (!thread) return null;
+  // Verify the thread belongs to this workspace
+  if (thread.workspace_id !== workspaceId) return null;
+  return toThread(env, thread);
+}
+
+export async function getThreadsByIds(
+  context: AppLoadContext,
+  workspaceId: string,
+  threadIds: string[],
+): Promise<Thread[]> {
+  const env = getEnv(context);
+  const wsInfo = await getWorkspaceInfo(env, workspaceId);
+  if (!wsInfo) return [];
+  const uniqueThreadIds = Array.from(
+    new Set(threadIds.map((threadId) => threadId.trim()).filter(Boolean)),
+  );
+  if (uniqueThreadIds.length === 0) return [];
+  const mode = d1ReadMode(env, "threadLists");
+  const mirrorRead =
+    mode === "do"
+      ? null
+      : safeMirrorRead(env, "threadLists", (db) =>
+          db.getMirroredThreadsByIds(workspaceId, uniqueThreadIds),
+        );
+  const mirrored = mode === "d1" ? await mirrorRead : null;
+  if (mirrored) {
+    // Match OrgDO.getThreadsByIds: requested order, missing ids dropped.
+    const byId = new Map(mirrored.map((row) => [row.id, row]));
+    return uniqueThreadIds
+      .map((id) => byId.get(id))
+      .filter((row): row is MirroredThreadRow => Boolean(row))
+      .map((row) => toThreadListPreview(env, mirroredRowToOrgThread(row)));
+  }
+  const orgStub = env.ORG.get(env.ORG.idFromName(wsInfo.org_id));
+  const threads = await retryTransientDurableObjectRead(
+    "OrgDO.getThreadsByIds",
+    () => orgStub.getThreadsByIds(workspaceId, uniqueThreadIds),
+  );
+  if (mode === "shadow") {
+    const shadow = await mirrorRead;
+    if (shadow) {
+      // Neither side promises an order here: compare as sets.
+      const byId = <T extends { id: string }>(rows: T[]) =>
+        [...rows].sort((a, b) => a.id.localeCompare(b.id));
+      compareThreadLists(env, byId(threads), byId(shadow), [], { workspaceId });
+    }
+  }
+  return threads.map((thread) => toThreadListPreview(env, thread));
+}
+
+export async function updateThread(
+  context: AppLoadContext,
+  id: string,
+  title: string,
+  workspaceId: string,
+  options: KnownOrgOptions = {},
+): Promise<Thread | null> {
+  const env = getEnv(context);
+  let orgId = options.orgId;
+  if (!orgId) {
+    const wsInfo = await getWorkspaceInfo(env, workspaceId);
+    if (!wsInfo) return null;
+    orgId = wsInfo.org_id;
+  }
+  const orgStub = env.ORG.get(env.ORG.idFromName(orgId));
+  // Verify the thread belongs to this workspace first
+  const existing = await orgStub.getThread(id);
+  if (!existing || existing.workspace_id !== workspaceId) return null;
+  const thread = await orgStub.updateThread(id, title);
+  if (!thread) return null;
+  return toThread(env, thread);
+}
+
+export async function updateThreadModel(
+  context: AppLoadContext,
+  id: string,
+  model: LlmModel,
+  workspaceId: string,
+  options: ModelPickerStateOptions = {},
+): Promise<Thread | null> {
+  const env = getEnv(context);
+  let orgId = options.orgId;
+  if (!orgId) {
+    const wsInfo = await getWorkspaceInfo(env, workspaceId);
+    if (!wsInfo) return null;
+    orgId = wsInfo.org_id;
+  }
+  const orgStub = env.ORG.get(env.ORG.idFromName(orgId));
+  const existing = await orgStub.getThread(id);
+  if (!existing || existing.workspace_id !== workspaceId) return null;
+  const pickerState = await getWorkspaceModelPickerState(
+    context,
+    workspaceId,
+    { ...options, orgId },
+  );
+  if (
+    !pickerState ||
+    !isLlmModelAllowedForNewThread(
+      model,
+      pickerState.llmProvider,
+      {
+        customApi: pickerState.customApi,
+        customModelId: pickerState.customModelId,
+        awsRegion: pickerState.awsRegion,
+        allowOpenAiSubscription: pickerState.allowOpenAiSubscription,
+      },
+    ) ||
+    !pickerState.allowedThreadModels.includes(model)
+  ) {
+    throw new Error("Invalid thread model");
+  }
+  const updated = await orgStub.updateThreadModel(id, model);
+  return updated ? toThread(env, updated) : null;
+}
+
+export async function setThreadFirstUserMessage(
+  context: AppLoadContext,
+  id: string,
+  firstUserMessage: string,
+  workspaceId: string,
+): Promise<Thread | null> {
+  const env = getEnv(context);
+  const wsInfo = await getWorkspaceInfo(env, workspaceId);
+  if (!wsInfo) return null;
+  const orgStub = env.ORG.get(env.ORG.idFromName(wsInfo.org_id));
+  // Verify the thread belongs to this workspace first
+  const existing = await orgStub.getThread(id);
+  if (!existing || existing.workspace_id !== workspaceId) return null;
+  const thread = await orgStub.setThreadFirstUserMessage(id, firstUserMessage);
+  if (!thread) return null;
+  return toThread(env, thread);
+}
+
+/**
+ * A thread's row on the hosted agent runtime (plans/runtime-threads-direct.md),
+ * or null for a thread that runs on ChatThreadDO.
+ */
+export async function getThreadRuntime(
+  context: AppLoadContext,
+  threadId: string,
+  orgId: string,
+): Promise<ThreadRuntimeRecord | null> {
+  const env = getEnv(context);
+  return await env.ORG.get(env.ORG.idFromName(orgId)).getThreadRuntime(threadId);
+}
+
+export async function deleteThread(
+  context: AppLoadContext,
+  id: string,
+  workspaceId: string,
+  options: KnownOrgOptions = {},
+): Promise<boolean> {
+  const env = getEnv(context);
+  let orgId = options.orgId;
+  if (!orgId) {
+    const wsInfo = await getWorkspaceInfo(env, workspaceId);
+    if (!wsInfo) return false;
+    orgId = wsInfo.org_id;
+  }
+  const orgStub = env.ORG.get(env.ORG.idFromName(orgId));
+  // Verify the thread belongs to this workspace first
+  const existing = await orgStub.getThread(id);
+  if (!existing || existing.workspace_id !== workspaceId) return false;
+  await orgStub.deleteThread(id);
+  return true;
+}
+
+export async function generateThreadTitle(
+  context: AppLoadContext,
+  threadId: string,
+  workspaceId: string,
+  message: string,
+  userId?: string | null,
+): Promise<void> {
+  try {
+    const env = getEnv(context);
+
+    const wsInfo = await getWorkspaceInfo(env, workspaceId);
+    if (!wsInfo) return;
+
+    const titleSourceMessage = getThreadTitleSourceMessage(message);
+    if (!titleSourceMessage) return;
+
+    const title = await generateThreadTitleWithOpenAI(
+      env.AI as never,
+      titleSourceMessage,
+      {
+        orgId: wsInfo.org_id,
+        workspaceId,
+        threadId,
+      },
+      { gatewayName: env.CF_GATEWAY_NAME },
+    );
+    if (!title) return;
+
+    const orgStub = env.ORG.get(env.ORG.idFromName(wsInfo.org_id));
+    await orgStub.updateThread(threadId, title);
+    if (userId) {
+      await env.USER.get(env.USER.idFromName(userId))
+        .renameEmptySingleThreadGroupForThread(threadId, title);
+    }
+
+    // The page reads the title from OrgDO; the group avatar is made here.
+    if (userId) {
+      const { generateRuntimeThreadGroupAvatar } = await import("../../workers/main/src/agent-runtime/thread-metadata");
+      await generateRuntimeThreadGroupAvatar(env, {
+        threadId,
+        workspaceId,
+        orgId: wsInfo.org_id,
+        userId,
+        userName: null,
+        userEmail: null,
+      });
+    }
+  } catch (e) {
+    console.error("[generateThreadTitle] Error:", e);
+  }
+}
+
+/**
+ * A thread's whole transcript as parsed messages, wherever it runs (the
+ * runtime's history for a runtime thread, ChatThreadDO's pi_core otherwise).
+ */
+export async function getThreadTranscript(
+  context: AppLoadContext,
+  input: { orgId: string; threadId: string },
+): Promise<ParsedThreadMessage[]> {
+  const { parsedThreadTranscript } = await import("../../workers/main/src/agent-runtime/thread-transcript");
+  const messages = await parsedThreadTranscript(getEnv(context) as never, input.orgId, input.threadId);
+  return messages as unknown as ParsedThreadMessage[];
+}
+
+export interface GroupNewChatRecentSource {
+  /** Newest settled render window only; the welcome screen must not scan an
+   * entire long-running thread to populate its best-effort "recent" cards. */
+  messages: ParsedThreadMessage[];
+  projectActivity: ThreadProjectActivity[];
+}
+
+export async function getGroupNewChatRecentSource(
+  context: AppLoadContext,
+  input: { orgId: string; threadId: string },
+): Promise<GroupNewChatRecentSource> {
+  const { threadRecentSource } = await import("../../workers/main/src/agent-runtime/thread-transcript");
+  const source = await threadRecentSource(getEnv(context) as never, input.orgId, input.threadId);
+  return {
+    messages: Array.isArray(source?.messages) ? source.messages as unknown as ParsedThreadMessage[] : [],
+    projectActivity: Array.isArray(source?.projectActivity)
+      ? source.projectActivity as ThreadProjectActivity[]
+      : [],
+  };
+}
+
+/** Open `target` in the thread's preview panel (its UI state lives in OrgDO). */
+export async function setThreadPreviewTarget(
+  context: AppLoadContext,
+  orgId: string,
+  threadId: string,
+  target: PreviewTarget,
+): Promise<void> {
+  const env = getEnv(context);
+  await env.ORG.get(env.ORG.idFromName(orgId)).upsertThreadPreviewTarget(threadId, target);
+}
+
+/** An app's visibility changed: update it in the thread's preview tabs. */
+export async function setThreadPreviewAppVisibility(
+  context: AppLoadContext,
+  orgId: string,
+  threadId: string,
+  scriptName: string,
+  isPublic: boolean,
+): Promise<void> {
+  const env = getEnv(context);
+  await env.ORG.get(env.ORG.idFromName(orgId)).setThreadPreviewAppVisibility(threadId, scriptName, isPublic);
+}

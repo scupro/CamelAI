@@ -18,7 +18,10 @@ jobs:
           node-version: '22'
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci || npm install --legacy-peer-deps
+
+      - name: Build (notebook renderer + React Router)
+        run: npm run build
 
       - name: Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3

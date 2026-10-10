@@ -76,7 +76,7 @@
 | `LLM_BASE_URL` | `https://api.openrouter.ai/v1` | 外部 LLM 的 Base URL |
 | `LLM_MODEL` | `deepseek/deepseek-chat-v3-0324` | 外部 LLM 使用的模型 |
 
-### 僅 GitHub Actions + wrangler-action 需要（面板直連时可留空）
+### 僅 GitHub Actions + wrangler-action 需要（面板直連時可留空）
 
 | 變量名 | 說明 |
 |--------|------|
@@ -87,11 +87,12 @@
 
 ## 🚀 Step 5：首次部署
 
-- 面板自動檢測到 `package.json` 並啟動 Build。
-- Build Command 設為 `npm run build`。
-- Build Output Directory 設為 `build/client`。
-- 點擊 **`Deploy`**，等待約 1-2 分鐘。
-- 完成後會給出訪問 URL（如 `https://camelai-free-xxx.workers.dev`）。
+- 本專案是 **Cloudflare Worker**（SSR + 靜態資源，由 `wrangler.jsonc` 驅動），**不是 Pages 專案**，因此沒有「Build Output Directory」欄位，請不要按 Pages 流程填 `dist`。
+- 建立專案時選擇 **Workers & Pages → Workers → Connect to Git**（Workers Builds）。
+- Build command 設為 `npm run build`（會先建 notebook renderer，再跑 `react-router build`，產出 `build/client` + `build/server`）。
+- Deploy command 設為 `npx wrangler deploy`（或直接留空，由 `wrangler.jsonc` 自動部署）。
+- 點擊 **`Deploy`**，等待約 2-4 分鐘。
+- 完成後會給出訪問 URL（如 `https://camelai.<account>.workers.dev`）。
 
 ## 💬 Step 6：使用
 
@@ -111,18 +112,17 @@
 
 ```
 CamelAI/
-├── .gitignore                # 忽略 build 輸出
-├── package.json              # 依賴（已精簡，移除 container/queue 相關）
-├── wrangler.jsonc            # Cloudflare 配置（僅本地開發參考，面板直連时可忽略）
-├── src/
-│   ├── index.ts              # Worker 入口：聊天 API + 前端頁面
-│   └── types.ts              # Env 類型定義
-├── .github/
-│   └── workflows/
-│       └── deploy.yml        # GitHub Actions：workflow_dispatch + push 觸發
-├── migrations/
-│   └── 0001_init.sql         # 供本地 wrangler 使用，面板直連时无需執行
-└── README.md
+├── .gitignore                # 忽略 build 輸出與金鑰
+├── package.json              # 依賴與 build:cf 腳本（純 npm，不用 bun）
+├── wrangler.jsonc            # Free Tier 配置：D1 + KV + AI + DO，無 R2/container/queue
+├── react-router.config.ts    # React Router 框架設定（appDirectory: src、SSR）
+├── vite.config.ts            # Vite + @cloudflare/vite-plugin
+├── src/                      # React Router 前端（UI、routes、lib；完整 camelAI Web UI）
+├── workers/main/             # 主 Worker：API、Durable Objects、認證、聊天執行緒
+├── public/                   # 靜態資源（含 notebook-renderer 產物）
+├── scripts/                  # 建置與部署輔助腳本
+├── migrations/               # D1 schema
+└── .github/workflows/deploy.yml
 ```
 
 ---

@@ -1,0 +1,194 @@
+@import "tailwindcss" source(none);
+@import "tw-animate-css";
+@import "./shadcn-theme.css";
+@source "../";
+
+/* Safe-area padding utilities. To preserve baseline padding, set
+   --safe-area-padding-{top|right|bottom|left} on the element. */
+@utility pt-safe {
+  padding-top: max(var(--safe-area-padding-top, 0px), env(safe-area-inset-top));
+}
+
+@utility pb-safe {
+  padding-bottom: max(var(--safe-area-padding-bottom, 0px), env(safe-area-inset-bottom));
+}
+
+@utility pl-safe {
+  padding-left: max(var(--safe-area-padding-left, 0px), env(safe-area-inset-left));
+}
+
+@utility pr-safe {
+  padding-right: max(var(--safe-area-padding-right, 0px), env(safe-area-inset-right));
+}
+
+@layer base {
+  html,
+  body {
+    overscroll-behavior-y: none;
+  }
+
+  * {
+    @apply border-border outline-ring/50;
+	}
+  body {
+    @apply bg-background text-foreground;
+    /* Reveal body once CSS loads (counteracts inline FOUC prevention in dev) */
+    opacity: 1 !important;
+	}
+}
+
+/* Make collapsed sidebar background transparent to match main content */
+[data-collapsible="icon"] [data-slot="sidebar-inner"] {
+  background: transparent;
+}
+
+/* Markdown content styles */
+.markdown-content {
+  @apply text-foreground;
+
+  /* Ensure proper word wrapping */
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.notebook-report .markdown-content h1,
+.notebook-report .markdown-content h2,
+.notebook-report .markdown-content h3 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.notebook-report .markdown-content h2 {
+  font-size: 1.25rem;
+  margin-top: 2.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.notebook-report .markdown-content h3 {
+  font-size: 1.125rem;
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.notebook-report .markdown-content p {
+  color: var(--color-muted-foreground);
+  line-height: 1.7;
+}
+
+.notebook-report .markdown-content code:not(pre code) {
+  background: color-mix(in oklab, var(--color-muted) 60%, transparent);
+  border-radius: 0.375rem;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  padding: 0.125rem 0.375rem;
+}
+
+/* User message variant - inverted colors for readability in bubbles */
+.markdown-content-user {
+  /* Inline code in user messages */
+  & code:not(pre code) {
+    @apply bg-primary-foreground/20 text-primary-foreground;
+  }
+
+  /* Code blocks in user messages - use standard styling */
+  & .shiki-wrapper,
+  & pre {
+    @apply bg-background/10;
+  }
+}
+
+/* Shiki dual theme support */
+.shiki,
+.shiki span {
+  color: var(--shiki-light) !important;
+}
+
+.dark .shiki,
+.dark .shiki span {
+  color: var(--shiki-dark) !important;
+}
+
+.source-preview-lines,
+.code-preview-lines {
+  --source-line-number-gap: 1rem;
+  --source-line-number-width: max(
+    1.25rem,
+    calc(var(--source-line-number-digits, 2) * 0.65em)
+  );
+  overflow-x: hidden;
+}
+
+.source-preview-lines pre,
+.code-preview-lines pre {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: normal;
+}
+
+.source-preview-lines code,
+.code-preview-lines code {
+  counter-reset: line;
+  display: block;
+}
+
+.source-preview-lines.source-preview-plain pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.source-preview-lines .line,
+.code-preview-lines .line {
+  display: block;
+  min-height: 1.25rem;
+  padding-left: calc(var(--source-line-number-width) + var(--source-line-number-gap));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.source-preview-lines .line::before,
+.code-preview-lines .line::before {
+  content: counter(line);
+  counter-increment: line;
+  display: inline-block;
+  width: var(--source-line-number-width);
+  margin-left: calc(-1 * (var(--source-line-number-width) + var(--source-line-number-gap)));
+  margin-right: var(--source-line-number-gap);
+  text-align: right;
+  color: var(--color-muted-foreground);
+  opacity: 0.3;
+  user-select: none;
+}
+
+@keyframes progress-shimmer {
+  0% {
+    transform: translateX(-100%);
+    width: 40%;
+  }
+  100% {
+    transform: translateX(350%);
+    width: 40%;
+  }
+}
+
+@keyframes progress-glow {
+  0%, 100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.animate-progress-shimmer {
+  animation: progress-shimmer 1.2s ease-in-out infinite;
+}
+
+.animate-progress-glow {
+  animation: progress-glow 1.2s ease-in-out infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
