@@ -1,0 +1,9 @@
+node_modules/
+.wrangler/
+build/
+.env
+.dev.vars
+*.log
+.git/
+# 金鑰：私鑰絕不外洩
+DEPLOY_KEY.md
