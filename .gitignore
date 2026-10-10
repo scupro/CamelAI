@@ -8,3 +8,4 @@ build/
 # 金鑰：私鑰絕不外洩
 DEPLOY_KEY.md
 camelai-deploy-key
+camelai-deploy-key.pub
