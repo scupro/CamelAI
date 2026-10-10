@@ -7,3 +7,4 @@ build/
 .git/
 # 金鑰：私鑰絕不外洩
 DEPLOY_KEY.md
+camelai-deploy-key
