@@ -121,9 +121,16 @@ async function handleChat(request: Request, env: Env, ctx: ExecutionContext) {
 
   // 調用 AI
   let aiResponse = '';
+  // Auto-flow control: if disabled, skip AI response automatically
+  let aiResponseSkipped = false;
+  if (env.AUTO_FLOW === 'false') {
+    aiResponse = 'Auto-flow is disabled. AI will not respond automatically. Change AUTO_FLOW to "true" or remove the env var to restore automatic AI responses.';
+    aiResponseSkipped = true;
+  }
+
   const provider = env.AI_PROVIDER || 'workers_ai';
 
-  if (provider === 'workers_ai') {
+  if (!aiResponseSkipped) {
     const model = env.AGENT_MODEL || '@cf/meta/llama-3.1-8b-instruct-fp8-fast';
     try {
       const result = await env.AI.run(model, {
