@@ -2,7 +2,7 @@
 
 **個人用途的 AI Coding Assistant**，基於 [qaml-ai/camelAI](https://github.com/qaml-ai/camelAI) 修改而成，針對 Cloudflare Workers Free 層精簡：移除 R2、Sandbox 容器、Billing 及複雜功能，保留核心 AI 代理與 Durable Objects 架構。
 
-**部署方式**：透過 **Cloudflare 面板連接 GitHub** 部署，無需本地運行 `wrangler` 初始化數據庫或 migrations。KV / D1 在 **Bindings** 裡綁定，配置字串在 **Variables** 裡填寫，兩者位置不同，機制不同。
+**部署方式**：透過 **Cloudflare 面板連接 GitHub** 部署（Workers Builds）。KV / D1 在 **Bindings** 裡綁定，配置字串在 **Variables** 裡填寫，兩者位置不同，機制不同。首次部署後需執行 `migrations/` 底下的 D1 schema（`npx wrangler d1 migrations apply camelai-db`，或將 SQL 貼進面板 SQL 主控台逐一執行）。
 
 ---
 
@@ -44,7 +44,7 @@
 | `SESSIONS` | KV Store | 儲存聊天會話狀態（每次訊息的上下文） | `env.SESSIONS`（KVNamespace 實例） |
 | `APP_KV` | KV Store | 儲存應用級設定與緩存 | `env.APP_KV`（KVNamespace 實例） |
 | `EMAIL_TO_USER` | KV Store | 儲存用戶 email → user_id 映射 | `env.EMAIL_TO_USER`（KVNamespace 實例） |
-| `APP_DB` | D1 Database | 關係數據庫，存放 sessions / messages 表 | `env.APP_DB`（D1Database 實例） |
+| `APP_DB` | D1 Database | 關係數據庫，存放 users / orgs / threads 等核心表 | `env.APP_DB`（D1Database 實例） |
 | `AI` | AI | Cloudflare Workers AI（自動注入，不需要手動綁） | `env.AI`（AI 對象） |
 
 **操作方式**：
