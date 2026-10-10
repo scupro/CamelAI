@@ -7,80 +7,29 @@
   "rules": [
     { "type": "Text", "globs": ["**/*.md"], "fallthrough": true }
   ],
-  "observability": {
-    "enabled": false,
-    "traces": { "enabled": false, "head_sampling_rate": 1 }
-  },
-  "vars": {
-    "AI_VIRTUAL_MODEL": "dynamic/auto",
-    "R2_BUCKET_NAME": "",
-    "WAREHOUSE_EXPORT_BUCKET_NAME": "",
-    "R2_ACCOUNT_ID": "",
-    "R2_PARENT_ACCESS_KEY_ID": "",
-    "CF_ACCOUNT_ID": "",
-    "ARTIFACTS_NAMESPACE": "local",
-    "CF_DISPATCH_NAMESPACE": "camelai-local",
-    "CF_WORKER_NAME": "camelai-free",
-    "CF_GATEWAY_NAME": "camelai-gateway",
-    "BEDROCK_REGION": "us-west-2",
-    "EMAIL_FROM_ADDRESS": "no-reply@camelai.dev",
-    "WORKSPACE_EMAIL_DOMAIN": "camelai.dev",
-    "DISCORD_CHANNEL_ENABLED": "false",
-    "DISCORD_CLIENT_ID": "SET_IN_DISCORD_DEVELOPER_PORTAL",
-    "ENABLE_SANDBOX": "false",
-    "ENABLE_QUEUES": "false",
-    "ENABLE_USAGE_GUARD": "false",
-    "MAX_DAILY_REQUESTS": "100000",
-    "CPU_LIMIT_MS": "15000",
-    "WORKSPACE_EMAIL_DOMAIN": "camelai.dev"
-  },
-  "assets": {
-    "binding": "ASSETS",
-    "directory": "build/client"
-  },
-  "images": {
-    "binding": "IMAGES"
-  },
+  "vars": {},
   "ai": {
     "binding": "AI",
     "remote": true
   },
-  "worker_loaders": [
-    {
-      "binding": "CODE_MODE_LOADER"
-    }
-  ],
-  "artifacts": [
-    {
-      "binding": "ARTIFACTS",
-      "namespace": "local",
-      "remote": true
-    }
-  ],
-  "send_email": [
-    {
-      "name": "EMAIL",
-      "remote": true
-    }
-  ],
   "kv_namespaces": [
     {
-      "binding": "EMAIL_TO_USER",
-      "id": "ab267c4f44b847dda8bdca400a4e1884"
+      "binding": "SESSIONS",
+      "id": "f5ab08fdb1d7404fbc45a171217b4a27"
     },
     {
       "binding": "APP_KV",
       "id": "e894eb2caf1641ad8870da994b992fce"
     },
     {
-      "binding": "SESSIONS",
-      "id": "f5ab08fdb1d7404fbc45a171217b4a27"
+      "binding": "EMAIL_TO_USER",
+      "id": "ab267c4f44b847dda8bdca400a4e1884"
     }
   ],
   "d1_databases": [
     {
       "binding": "APP_DB",
-      "database_name": "camelai-free-db",
+      "database_name": "camelai-db",
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations"
     }
@@ -89,8 +38,6 @@
     "producers": [],
     "consumers": []
   },
-  "services": [],
-  "vpc_services": [],
   "durable_objects": {
     "bindings": [
       {
@@ -107,7 +54,6 @@
       }
     ]
   },
-  "workflows": [],
   "migrations": [
     {
       "tag": "v1",

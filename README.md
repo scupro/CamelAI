@@ -1,164 +1,168 @@
-# camelAI (Free Tier Edition)
+# CamelAI (Free Tier Edition)
 
-**個人用途的 AI Coding Assistant**，基於 [camelAI](https://github.com/qaml-ai/camelAI) 修改而成，針對 Cloudflare Workers Free 層精簡：移除 R2 對象存儲、Sandbox 容器、Billing 及複雜功能，保留核心 AI 代理與 Durable Objects 架構。
+**個人用途的 AI Coding Assistant**，基於 [qaml-ai/camelAI](https://github.com/qaml-ai/camelAI) 修改而成，針對 Cloudflare Workers Free 層精簡：移除 R2、Sandbox 容器、Billing 及複雜功能，保留核心 AI 代理與 Durable Objects 架構。
 
-## 上游來源
+**部署方式**：透過 **Cloudflare 面板連接 GitHub** 部署，無需本地運行 `wrangler` 初始化數據庫或 migrations。KV / D1 在 **Bindings** 裡綁定，配置字串在 **Variables** 裡填寫，兩者位置不同，機制不同。
+
+---
+
+## 📦 上游來源
 
 本項目修改自 [qaml-ai/camelAI](https://github.com/qaml-ai/camelAI)（MIT License）：
 - 原項目：`an AI coding assistant platform built on Cloudflare Workers and Durable Objects`
 - 修改原因：原項目依賴 R2、Durable Objects 容器、Queues 等付費/高級功能，無法完全在 Free 層運行
 - 本項目保留核心：Durable Objects（ChatThreadDO）、D1 數據庫、KV 命名空間、Workers AI
 
-## 功能
+---
 
-### 保留的核心功能
-- **Durable Objects 聊天會話**：ChatThreadDO 持久化聊天狀態
-- **AI Coding Agent**：workspace-aware 的 AI 代理（可接 Claude/OpenAI 等）
-- **D1 數據庫**：存儲項目文件與會話歷史（免費層 5GB）
-- **KV 命名空間**：快速鍵值存取（免費層 10 億讀/天）
-- **React 前端**：Web 界面顯示聊天與代碼編輯
-- **HTTP/SSE 傳輸**：實時消息流
+## ☁️ 快速部署：Cloudflare 面板連接 GitHub
 
-### 移除的功能（不支援）
-- **R2 對象存儲**：文件存儲改用 D1 BLOB 或外部免費方案
-- **Sandbox 容器**：項目構建、Notebook、SQL 執行需 Linux 容器
-- **Billing 系統**：無費用追蹤、無應用隔離
-- **複雜的隊列系統**：Slack/Discord 事件處理簡化或禁用
-- **多組織/多工作區**：單一使用者模式
+以下步驟將 GitHub 倉庫與 Cloudflare Workers 綁定並一鍵部署。
 
-### 新增/簡化
-- **精簡配置**：只需 D1 + KV + Workers AI，無需 R2
-- **本地開發**：`wrangler dev` 可完整測試（D1/KV 本地模擬器）
-- **Free 層優化**：請求限制、CPU 限制自適應
+### 步驟 1：準備 GitHub 倉庫
 
-## 目錄結構
+倉庫 `scupro/CamelAI` 已存在，且已將 **Deploy Key** 添加至 `Settings → Deploy keys`（勾選 `Allow write access`）。
+
+### 步驟 2：連接 Cloudflare 面板
+
+1. 登入 [Cloudflare Dashboard](https://dash.cloudflare.com/)。
+2. 進入 **Workers & Pages**。
+3. 點擊 **`Connect to Git`**（或 `Create a Project` → `Import from Git`）。
+4. 選擇 **GitHub**，授權後選擇倉庫：
+   - **Repository**: `scupro/CamelAI`
+   - **Branch**: `main`
+5. 點擊 `Start Setup`。
+
+---
+
+## 🔌 Step 3：設定 Bindings（綁定雲資源）
+
+**這是綁定的位置**，跟變數分開。進入 Workers & Pages → 你的項目 → **Settings → Bindings**：
+
+| 綁定名稱 | 類型 | 說明 | 程式碼中訪問方式 |
+|----------|------|------|------------------|
+| `SESSIONS` | KV Store | 儲存聊天會話狀態（每次訊息的上下文） | `env.SESSIONS`（KVNamespace 實例） |
+| `APP_KV` | KV Store | 儲存應用級設定與緩存 | `env.APP_KV`（KVNamespace 實例） |
+| `EMAIL_TO_USER` | KV Store | 儲存用戶 email → user_id 映射 | `env.EMAIL_TO_USER`（KVNamespace 實例） |
+| `APP_DB` | D1 Database | 關係數據庫，存放 sessions / messages 表 | `env.APP_DB`（D1Database 實例） |
+| `AI` | AI | Cloudflare Workers AI（自動注入，不需要手動綁） | `env.AI`（AI 對象） |
+
+**操作方式**：
+- KV：在 **Bindings → KV** 裡 `Create a namespace` → 起名為 `SESSIONS` / `APP_KV` / `EMAIL_TO_USER` → 系統自動綁到當前 Worker。
+- D1：在 **Bindings → D1** 裡 `Create a database` → 起名為 `APP_DB` → 系統自動綁。
+- **無需**在別的地方填寫 ID，Cloudflare 會自動把資源注入 `env.` 對象。
+
+> **綁定後**程式碼裡拿到的是**已連接好的資源實例**，不是字串。例如 `await env.SESSIONS.put(...)` 直接調用 KV 的 put 方法，`await env.APP_DB.prepare(...)` 直接執行 SQL。
+
+---
+
+## 🔤 Step 4：設定 Environment Variables（字串配置）
+
+**這是字串變數的位置**，跟綁定分開。進入 Workers & Pages → 你的項目 → **Settings → Variables**：
+
+### 必填（決定項目能否正常工作）
+
+| 變量名 | 說明 | 值示例 |
+|--------|------|--------|
+| `AI_PROVIDER` | 選擇 AI 提供者 | `workers_ai`（預設，用 Cloudflare 內建 AI） 或 `openrouter`（外接） |
+
+### 可選（有預設值，不改也能跑）
+
+| 變量名 | 預設值 | 說明 |
+|--------|--------|------|
+| `AGENT_MODEL` | `@cf/meta/llama-3.1-8b-instruct-fp8-fast` | Workers AI 使用的模型 |
+| `AI_VIRTUAL_MODEL` | `dynamic/auto` | Workers AI 自動選模型（一般不改） |
+| `LLM_API_KEY` | 空（僅當外接時必填） | 外部 LLM 的 API Key |
+| `LLM_BASE_URL` | `https://api.openrouter.ai/v1` | 外部 LLM 的 Base URL |
+| `LLM_MODEL` | `deepseek/deepseek-chat-v3-0324` | 外部 LLM 使用的模型 |
+
+### 僅 GitHub Actions + wrangler-action 需要（面板直連时可留空）
+
+| 變量名 | 說明 |
+|--------|------|
+| `CF_ACCOUNT_ID` | Cloudflare 賬號 ID |
+| `CF_API_TOKEN` | Cloudflare API Token |
+
+---
+
+## 🚀 Step 5：首次部署
+
+- 面板自動檢測到 `package.json` 並啟動 Build。
+- Build Command 預設 `bun run build:cf`（或 `npm run build:cf`）。
+- Build Output Directory 預設 `dist`（或 `build/client`，面板會自動偵測）。
+- 點擊 **`Deploy`**，等待約 1-2 分鐘。
+- 完成後會給出訪問 URL（如 `https://camelai-free-xxx.workers.dev`）。
+
+## 💬 Step 6：使用
+
+- 打開上面的 URL，看到 Web UI，可輸入問題。
+- 每次發訊息，Worker 從 KV 讀會話上下文，透過 Workers AI 推理並回覆。
+- `git push` 到 `main` 時 Cloudflare 會自動重新部署（`.github/workflows/deploy.yml` 已開啟 `workflow_dispatch` + `push` 觸發）。
+
+## 🔧 後續操作
+
+- **手動重新部署**：面板項目頁點 `Deploy`，隨時可以輸入新的變量值後重新部署。
+- **檢視日誌**：Workers & Pages → `Deployments` → 選最近一次 → `Logs`。
+- **D1 空間**：Free Tier 500 MB/庫，個人使用幾乎佔不滿。
+
+---
+
+## 📁 項目結構（精簡版）
 
 ```
-CamelAI Free Tier/
-├── wrangler.jsonc           # Cloudflare 配置（D1/KV/Workers AI）
-├── package.json             # 依賴與腳本（已精簡）
+CamelAI/
+├── .gitignore                # 忽略私鑰與 build 輸出
+├── DEPLOY_KEY.md             # 部署金鑰使用說明（僅參考，不含私鑰內容）
+├── package.json              # 依賴（已精簡，移除 container/queue 相關）
+├── wrangler.jsonc            # Cloudflare 配置（僅本地開發參考，面板直連时可忽略）
 ├── src/
-│   └── index.ts             # Worker 入口（路由 + AI 代理邏輯）
-├── workers/
-│   ├── main/
-│   │   └── src/
-│   │       ├── ChatThreadDO.ts      # Durable Object：聊天會話
-│   │       ├── UserDO.ts            # Durable Object：用戶狀態
-│   │       └── WorkspaceFilesystemDO.ts  # Durable Object：文件系統
-│   └── dispatcher/
-│       └── index.ts             # 應用分發器（簡化版）
+│   ├── index.ts              # Worker 入口：聊天 API + 前端頁面
+│   └── types.ts              # Env 類型定義
+├── .github/
+│   └── workflows/
+│       └── deploy.yml        # GitHub Actions：workflow_dispatch + push 觸發
 ├── migrations/
-│   └── 0001_init.sql      # D1 數據庫初始化
-└── public/
-    ├── index.html           # 前端頁面
-    └── app.js               # 前端邏輯
+│   └── 0001_init.sql         # 供本地 wrangler 使用，面板直連时无需執行
+└── README.md
 ```
 
-## 快速開始
+---
 
-### 1. 安裝依賴並登錄
+## 🔐 部署金鑰
 
-```bash
-cd CamelAI
-npm install
-npx wrangler login
-```
+- **私鑰**：`camelai-deploy-key`（放在項目根目錄，`.gitignore` 已忽略，勿上傳 GitHub）。
+- **公鑰**：`camelai-deploy-key.pub`（已添加至 GitHub `scupro/CamelAI` repo 的 `Settings → Deploy keys`）。
+- 用於本地測試或手動 `git push`：`GIT_SSH_COMMAND="ssh -i $(pwd)/camelai-deploy-key" git push origin main`。
 
-### 2. 創建 D1 數據庫與 KV
+---
 
-```bash
-# D1 數據庫（存會話和文件）
-npx wrangler d1 create CamelAI-db
+## ⚠️ Free Tier 已知限制
 
-# KV 命名空間（存狀態和緩存）
-npx wrangler kv:namespace create APP_KV
-npx wrangler kv:namespace create SESSIONS
-npx wrangler kv:namespace create EMAIL_TO_USER
-```
+| 資源 | 免費層額度 | 備註 |
+|------|-----------|------|
+| **日請求** | 100,000 (UTC 重置) | Workers & Pages → Analytics 監控 |
+| **CPU** | 每次 15s（預設） | 長時間 AI 推理請拆分 |
+| **D1 單庫大小** | 500 MB/庫 | 個人使用幾乎佔不滿 |
+| **D1 每日讀/寫** | 1,000,000 次/天/庫 | 同上 |
+| **KV 存儲** | 1 GB 寫/日、10 億讀/天 | 會話狀態極小 |
+| **Workers AI** | 每日 10,000 Neurons | 純 Workers AI 夠，外接視額度 |
 
-將輸出的 ID 填入 `wrangler.jsonc`：
+---
 
-```jsonc
-"d1_databases": [{ "binding": "APP_DB", "database_id": "<你的D1 ID>", "database_name": "CamelAI-db" }],
-"kv_namespaces": [
-  { "binding": "APP_KV", "id": "<KV ID 1>" },
-  { "binding": "SESSIONS", "id": "<KV ID 2>" },
-  { "binding": "EMAIL_TO_USER", "id": "<KV ID 3>" }
-]
-```
+## 🙋‍♂️ 常見問題
 
-### 3. 應用 D1 遷移
+**Q: 沒有 Cloudflare Workers 經驗，會不會很難設置？**  
+**A**: 不難。整個流程會點按鈕 + 在 Variables 裡填幾行字串，Cloudflare 自動 Build + Deploy，全程約 5 分鐘。
 
-```bash
-npx wrangler d1 migrations apply CamelAI-db
-```
+**Q: 面板創建的 D1/KV 是雲端數據嗎？以後想改用本地 `wrangler` 怎麼辦？**  
+**A**: 是真實雲端數據，與本地無關。若改用本地 `wrangler`，可 `npx wrangler d1 clone camelai-db ./local-db` 克隆到本地，但個人 Free Tier 用面板操作即可，無需額外設置。
 
-### 4. 配置 AI 金鑰（選用）
+**Q: 想外接 OpenAI 怎麼辦？**  
+**A**: 在 Variables 裡填 `LLM_API_KEY`、`LLM_BASE_URL`，並將 `AI_PROVIDER` 設為 `openrouter`，程式碼自動切換到外接模式。
 
-```bash
-# 使用 Cloudflare AI Gateway（推薦）
-npx wrangler secret put AI_GATEWAY_TOKEN
+---
 
-# 或外接 LLM API（OpenAI/Claude/DeepSeek 等）
-npx wrangler secret put LLM_API_KEY
-# 可在 wrangler.jsonc vars 設定：
-#   "LLM_BASE_URL": "https://api.openrouter.ai/v1",
-#   "LLM_MODEL": "deepseek/deepseek-chat-v3-0324"
-```
-
-### 5. 部署
-
-```bash
-npx wrangler deploy
-```
-
-打開 `https://camelai-free.<你的子域>.workers.dev` 即可使用。
-
-## 本地開發
-
-```bash
-npx wrangler dev
-# 打開 http://localhost:8787
-```
-
-本地開發時 D1/KV 使用 Cloudflare 模擬器，數據存於 `.wrangler/`。
-
-## Free 層限制提醒
-
-| 資源 | Free 額度 | 用途 |
-|------|---------|------|
-| 日請求 | 100,000（UTC 重置） | 核心 API |
-| CPU | 每次 15s | 避免長運算 |
-| D1 存儲 | 5GB | 會話 + 文件 |
-| D1 行讀 | 500M/日 | 數據查詢 |
-| KV 存儲 | 1GB 寫/日 | 狀態 + 緩存 |
-| KV 行讀 | 10 億/日 | 快速讀取 |
-| Workers AI | 每日 10,000 Neurons | LLM 推理 |
-
-**建議**：
-- 監控日請求數，接近 100k 時升級 Paid（$5/月）或分散多 Worker
-- CPU 限制 15s：長時間 AI 推理可拆成多輪、使用 SSE 流式
-- D1 存儲 5GB：定期清理舊會話（設 TTL 或寫清理腳本）
-
-## 與原項目差異
-
-| 項目 | 原 camelAI | 本項目 |
-|------|-----------|--------|
-| R2 | 存項目文件 | **移除**（D1 BLOB 代替） |
-| 容器 | 構建/Notebook/SQL | **移除** |
-| Billing | 費用追蹤 + 應用隔離 | **移除** |
-| 隊列 | Slack/Discord 事件 | **簡化/禁用** |
-| 多組織 | 支持 | **不支持**（單用戶） |
-| D1/KV | 支持 | **保留** |
-| Workers AI | 支持 | **保留** |
-| Free 層 | 部分支援 | **完整支援** |
-
-## 授權
+## 📜 授權
 
 - 修改自：[qaml-ai/camelAI](https://github.com/qaml-ai/camelAI)（MIT License）
 - 本項目：MIT License
-
-## 貢獻者
-
-- 原項目：qaml-ai 團隊
-- 修改：本項目維護者（個人 Free 層版本）
