@@ -156,7 +156,7 @@ printf 'https://camelai.<你的子網域>.workers.dev' | npx wrangler secret put
 | `NOTION_CLIENT_ID`、`NOTION_CLIENT_SECRET` | Notion 整合 |
 | `SLACK_CLIENT_ID`、`DISCORD_CLIENT_ID` | Slack / Discord 整合 |
 | `AGENT_RUNTIME_API_TOKEN` | agent runtime 對外 API 驗證 |
-| `SELFHOST_AI_PROVIDER`、`SELFHOST_AI_API_KEY`、`SELFHOST_AI_BASE_URL`、`SELFHOST_AI_MODEL`、`SELFHOST_AI_NAME`、`SELFHOST_AI_AUTH_TYPE`、`SELFHOST_AI_API`、`SELFHOST_AI_AWS_REGION` | **外接 AI 提供者（openai / anthropic / openrouter / bedrock / custom）走這一組**，型別定義在 `src/lib/selfhost-ai-provider.ts:11-22`。`SELFHOST_AI_PROVIDER` 必填，且只能是 `anthropic`、`bedrock`、`custom`、`openai`、`openrouter` 之一；只填其他 `SELFHOST_AI_*` 卻漏填它，程式會回 `"SELFHOST_AI_PROVIDER is required when SELFHOST_AI_* variables are set."`。`SELFHOST_AI_API_KEY` 請用 **Secret** 型別。注意名稱是 `SELFHOST_AI_PROVIDER`，**不是** `AI_PROVIDER` |
+| `SELFHOST_AI_PROVIDER`、`SELFHOST_AI_API_KEY`、`SELFHOST_AI_BASE_URL`、`SELFHOST_AI_MODEL`、`SELFHOST_AI_NAME`、`SELFHOST_AI_AUTH_TYPE`、`SELFHOST_AI_API`、`SELFHOST_AI_AWS_REGION` | **外接 AI 提供者（openai / anthropic / openrouter / bedrock / custom）走這一組**，型別定義在 `src/lib/selfhost-ai-provider.ts:11-22`。`SELFHOST_AI_PROVIDER` 必填，且只能是 `anthropic`、`bedrock`、`custom`、`openai`、`openrouter` 之一；只填其他 `SELFHOST_AI_*` 卻漏填它，程式會回 `"SELFHOST_AI_PROVIDER is required when SELFHOST_AI_* variables are set."`。`SELFHOST_AI_API_KEY` 請用 **Secret** 型別。注意名稱是 `SELFHOST_AI_PROVIDER`，**不是** `AI_PROVIDER`。可用的免費模型清單見 [`docs/free-models.md`](docs/free-models.md) |
 | `LOCAL_AUTH_BYPASS`、`LOCAL_AUTH_BYPASS_HOSTS` | 僅本機開發跳過登入；程式碼另外要求請求必須來自 localhost（`src/lib/auth.server.ts:298-310`）。**生產環境不要設** |
 
 ### D. 舊版 README 列過、但程式碼其實沒讀的變數（設了沒作用）
@@ -241,6 +241,8 @@ printf 'gpt-4o-mini'   | npx wrangler secret put SELFHOST_AI_MODEL
 ```
 
 `SELFHOST_AI_PROVIDER` 可填 `anthropic`、`bedrock`、`custom`、`openai`、`openrouter`；走 `custom` / `openrouter` 時另填 `SELFHOST_AI_BASE_URL`。完整驗證邏輯見 `src/lib/selfhost-ai-provider.ts`。
+
+**想先用免費模型？** 見 [`docs/free-models.md`](docs/free-models.md)——內含 OpenRouter（19 個免費模型，含 `cohere/north-mini-code:free`）、Groq（免費方案僅 `openai/gpt-oss-120b`、`openai/gpt-oss-20b`、`qwen/qwen3.8-27b`；注意 `llama-3.3-70b-versatile` 已改為 Enterprise 不再免費）、Cohere（試用金鑰每月僅 1,000 次呼叫）的實測清單、速率限制與接法。
 
 ---
 
