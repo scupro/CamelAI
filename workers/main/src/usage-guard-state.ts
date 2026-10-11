@@ -1,3 +1,23 @@
+/**
+ * 用量守衛狀態（usage guard state）—— Free Tier 佔位模組。
+ *
+ * Free Tier 已移除 app 用量守衛（`app-usage-guard` 工作程序、追蹤稽核、隔離
+ * （quarantine）與 suspension 流程），本檔只保留註冊表欄位型別、狀態常數與
+ * 「純字串」的租約名稱產生器，讓仍參照本模組的 services/deploy.ts 與
+ * user-app-cost-controls-backfill.ts 能通過型別檢查。
+ *
+ * 行為取捨（比照本專案「只計費顯示／限制者一律未受限」的原則）：
+ * - `ensureUsageGuardSchema` 不建立任何 `app_usage_guard_*` 資料表（no-op）。
+ * - 租約（operation lease）是防止「同一 app 同時被部署與守衛重寫」的互斥鎖，
+ *   沒有守衛就沒有競爭，一律視為取得／釋放成功。
+ * - `markUsageGuardEligible` 不寫 D1，回傳未受限的原預設值（active、無觀測期）。
+ * - `isUsageGuardRecovery` 一律 false：Free Tier 不會有 suspending／suspended
+ *   狀態的部署。
+ *
+ * 原始實作：上述函式會確保五張 `app_usage_guard_*` 資料表存在，並在 D1 中讀寫
+ * 狀態、評估紀錄、事件與租約列。
+ */
+
 export type UsageGuardStatus =
   | "unmonitored"
   | "active"
@@ -8,11 +28,16 @@ export type UsageGuardStatus =
   | "error"
   | "exempt";
 
+/** 被暫停後重新部署的觀測期長度（毫秒）。 */
 export const USAGE_GUARD_PROBATION_MS = 60 * 60 * 1000;
-export const USAGE_GUARD_OPERATION_LEASE_TTL_MS = 60_000;
-export const USAGE_GUARD_OPERATION_LEASE_WAIT_MS = 15_000;
-const USAGE_GUARD_OPERATION_LEASE_RETRY_MS = 250;
 
+/** 單一 app 操作租約的效期（毫秒）。 */
+export const USAGE_GUARD_OPERATION_LEASE_TTL_MS = 60_000;
+
+/** 租約被佔用時，最多等待多久（毫秒）。 */
+export const USAGE_GUARD_OPERATION_LEASE_WAIT_MS = 15_000;
+
+/** 寫進 app 註冊表（KV）的用量守衛欄位。 */
 export interface UsageGuardRegistryFields {
   usage_guard_status?: UsageGuardStatus;
   usage_guard_eligible_version?: string;
@@ -21,125 +46,42 @@ export interface UsageGuardRegistryFields {
   usage_guard_reason?: string | null;
 }
 
-export async function ensureUsageGuardSchema(db: D1Database): Promise<void> {
-  const statements = `
-    CREATE TABLE IF NOT EXISTS app_usage_guard_state (
-      app_id TEXT PRIMARY KEY,
-      dispatch_script_name TEXT NOT NULL UNIQUE,
-      org_id TEXT NOT NULL,
-      workspace_id TEXT NOT NULL,
-      script_name TEXT NOT NULL,
-      status TEXT NOT NULL,
-      eligible_script_version TEXT,
-      eligible_at INTEGER,
-      trace_audited_at INTEGER,
-      probation_until INTEGER,
-      consecutive_over_limit INTEGER NOT NULL DEFAULT 0,
-      reason_code TEXT,
-      decision_json TEXT,
-      artifact_cache_key TEXT,
-      suspended_at INTEGER,
-      quarantine_version TEXT,
-      quarantine_attempts INTEGER NOT NULL DEFAULT 0,
-      next_retry_at INTEGER,
-      updated_at INTEGER NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS app_usage_guard_evaluations (
-      app_id TEXT NOT NULL,
-      window_minutes INTEGER NOT NULL,
-      window_end INTEGER NOT NULL,
-      rows_read INTEGER NOT NULL,
-      rows_written INTEGER NOT NULL,
-      estimated_cost_usd REAL NOT NULL,
-      query_run_id TEXT,
-      policy_version TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      PRIMARY KEY (app_id, window_minutes, window_end, policy_version)
-    );
-    CREATE TABLE IF NOT EXISTS app_usage_guard_events (
-      id TEXT PRIMARY KEY,
-      app_id TEXT NOT NULL,
-      event_type TEXT NOT NULL,
-      details_json TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS app_usage_guard_leases (
-      name TEXT PRIMARY KEY,
-      holder TEXT NOT NULL,
-      expires_at INTEGER NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS app_usage_guard_health (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      last_attempt_at INTEGER,
-      last_success_at INTEGER,
-      last_error TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_usage_guard_status ON app_usage_guard_state(status, updated_at);
-    CREATE INDEX IF NOT EXISTS idx_usage_guard_eval_retention ON app_usage_guard_evaluations(created_at);
-    CREATE INDEX IF NOT EXISTS idx_usage_guard_events_app ON app_usage_guard_events(app_id, created_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_usage_guard_events_retention ON app_usage_guard_events(created_at);
-  `;
-  await db.batch(
-    statements
-      .split(";")
-      .map((statement) => statement.trim())
-      .filter(Boolean)
-      .map((statement) => db.prepare(statement)),
-  );
-  const columns = await db.prepare("PRAGMA table_info(app_usage_guard_state)").all<{ name: string }>();
-  const columnNames = new Set(columns.results.map((column) => column.name));
-  const upgrades: D1PreparedStatement[] = [];
-  if (!columnNames.has("quarantine_attempts")) {
-    upgrades.push(db.prepare("ALTER TABLE app_usage_guard_state ADD COLUMN quarantine_attempts INTEGER NOT NULL DEFAULT 0"));
-  }
-  if (!columnNames.has("next_retry_at")) {
-    upgrades.push(db.prepare("ALTER TABLE app_usage_guard_state ADD COLUMN next_retry_at INTEGER"));
-  }
-  if (upgrades.length > 0) await db.batch(upgrades);
-}
-
-export function operationLeaseName(appId: string): string {
-  return `app-operation:${appId}`;
-}
-
-export async function acquireUsageGuardOperationLease(input: {
-  db: D1Database;
-  appId: string;
-  holder: string;
-  now?: number;
-  ttlMs?: number;
-}): Promise<boolean> {
-  const now = input.now ?? Date.now();
-  await ensureUsageGuardSchema(input.db);
-  return tryAcquireUsageGuardOperationLease(input, now);
-}
-
-async function tryAcquireUsageGuardOperationLease(
-  input: {
-    db: D1Database;
-    appId: string;
-    holder: string;
-    ttlMs?: number;
-  },
-  now: number,
-): Promise<boolean> {
-  const result = await input.db.prepare(`
-    INSERT INTO app_usage_guard_leases (name, holder, expires_at)
-    VALUES (?, ?, ?)
-    ON CONFLICT(name) DO UPDATE SET holder = excluded.holder, expires_at = excluded.expires_at
-    WHERE app_usage_guard_leases.expires_at <= ?
-  `).bind(operationLeaseName(input.appId), input.holder, now + (input.ttlMs ?? USAGE_GUARD_OPERATION_LEASE_TTL_MS), now).run();
-  return (result.meta.changes ?? 0) > 0;
-}
-
+/** 租約取得結果（嘗試次數與等待時間僅供觀測）。 */
 export interface UsageGuardOperationLeaseAcquireResult {
   acquired: boolean;
   attempts: number;
   waitedMs: number;
 }
 
+/**
+ * 確保用量守衛的 D1 資料表存在。
+ *
+ * Free Tier 沒有用量守衛，因此不再建立 `app_usage_guard_*` 資料表；原回傳型別
+ * 為 `Promise<void>`，這裡維持 no-op。
+ */
+export async function ensureUsageGuardSchema(_db: D1Database): Promise<void> {
+  return undefined;
+}
+
+/** 某個 app 的操作租約名稱（純字串產生器，與原實作相同）。 */
+export function operationLeaseName(appId: string): string {
+  return `app-operation:${appId}`;
+}
+
+/** 取得某個 app 的操作租約；Free Tier 沒有競爭者，一律成功。 */
+export async function acquireUsageGuardOperationLease(_input: {
+  db: D1Database;
+  appId: string;
+  holder: string;
+  now?: number;
+  ttlMs?: number;
+}): Promise<boolean> {
+  return true;
+}
+
+/** 帶重試與抖動（jitter）的租約取得；Free Tier 立即成功，不等待。 */
 export async function acquireUsageGuardOperationLeaseWithRetry(
-  input: {
+  _input: {
     db: D1Database;
     appId: string;
     holder: string;
@@ -147,57 +89,32 @@ export async function acquireUsageGuardOperationLeaseWithRetry(
     waitMs?: number;
     retryMs?: number;
   },
-  runtime: {
+  _runtime: {
     now?: () => number;
     sleep?: (ms: number) => Promise<void>;
     random?: () => number;
   } = {},
 ): Promise<UsageGuardOperationLeaseAcquireResult> {
-  const now = runtime.now ?? Date.now;
-  const sleep = runtime.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  const random = runtime.random ?? Math.random;
-  const startedAt = now();
-  const waitMs = input.waitMs ?? USAGE_GUARD_OPERATION_LEASE_WAIT_MS;
-  const retryMs = input.retryMs ?? USAGE_GUARD_OPERATION_LEASE_RETRY_MS;
-  let attempts = 0;
-  await ensureUsageGuardSchema(input.db);
-
-  while (true) {
-    attempts += 1;
-    const attemptAt = now();
-    if (await tryAcquireUsageGuardOperationLease(input, attemptAt)) {
-      const result = { acquired: true, attempts, waitedMs: attemptAt - startedAt };
-      if (attempts > 1) console.info("[usage-guard-lease] acquired after contention", { appId: input.appId, ...result });
-      return result;
-    }
-    const elapsed = now() - startedAt;
-    if (elapsed >= waitMs) {
-      const result = { acquired: false, attempts, waitedMs: elapsed };
-      console.warn("[usage-guard-lease] acquisition timed out", { appId: input.appId, ...result });
-      return result;
-    }
-    const jitteredDelay = Math.max(1, Math.round(retryMs * (0.75 + random() * 0.5)));
-    await sleep(Math.min(jitteredDelay, waitMs - elapsed));
-  }
+  return { acquired: true, attempts: 1, waitedMs: 0 };
 }
 
-export async function releaseUsageGuardOperationLease(input: {
+/** 釋放某個 app 的操作租約；Free Tier 沒有租約可刪，no-op。 */
+export async function releaseUsageGuardOperationLease(_input: {
   db: D1Database;
   appId: string;
   holder: string;
 }): Promise<void> {
-  await input.db.prepare("DELETE FROM app_usage_guard_leases WHERE name = ? AND holder = ?")
-    .bind(operationLeaseName(input.appId), input.holder)
-    .run();
+  return undefined;
 }
 
 /**
- * Points the usage guard at a newly uploaded script version. Every deploy (and
- * rollback / cost-controls replay) resets the enforcement state, except that an
- * operator-set `exempt` status, with its reason and decision, survives: exempt
- * apps are never put into probation by a deploy.
+ * 把用量守衛指向新上傳的 script 版本。
+ *
+ * 原實作會重寫 D1 狀態列（暫停計數、隔離嘗試等歸零），並保留管理員手動設定的
+ * `exempt` 狀態。Free Tier 沒有守衛，因此不寫任何資料，只回傳原本「非 recovery」
+ * 路徑的預設值，讓部署註冊表照樣能寫出一致的欄位。
  */
-export async function markUsageGuardEligible(input: {
+export async function markUsageGuardEligible(_input: {
   db: D1Database;
   appId: string;
   dispatchScriptName: string;
@@ -209,61 +126,13 @@ export async function markUsageGuardEligible(input: {
   recovering: boolean;
   now?: number;
 }): Promise<{ status: "active" | "probation" | "exempt"; probationUntil: number | null; reasonCode: string | null }> {
-  const now = input.now ?? Date.now();
-  await ensureUsageGuardSchema(input.db);
-  const prior = await input.db.prepare("SELECT status FROM app_usage_guard_state WHERE app_id = ?")
-    .bind(input.appId)
-    .first<{ status: UsageGuardStatus }>();
-  const recovering = input.recovering || isUsageGuardRecovery(prior?.status);
-  const status = recovering ? "probation" : "active";
-  const probationUntil = recovering ? now + USAGE_GUARD_PROBATION_MS : null;
-  // The exempt check lives in the upsert itself (not just the read above) so an
-  // operator marking the app exempt mid-deploy is not overwritten.
-  const stored = await input.db.prepare(`
-    INSERT INTO app_usage_guard_state (
-      app_id, dispatch_script_name, org_id, workspace_id, script_name, status,
-      eligible_script_version, eligible_at, trace_audited_at, probation_until,
-      consecutive_over_limit, reason_code, decision_json, artifact_cache_key,
-      suspended_at, quarantine_version, quarantine_attempts, next_retry_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?, NULL, NULL, 0, NULL, ?)
-    ON CONFLICT(app_id) DO UPDATE SET
-      dispatch_script_name = excluded.dispatch_script_name,
-      org_id = excluded.org_id,
-      workspace_id = excluded.workspace_id,
-      script_name = excluded.script_name,
-      status = CASE WHEN app_usage_guard_state.status = 'exempt' THEN 'exempt' ELSE excluded.status END,
-      eligible_script_version = excluded.eligible_script_version,
-      eligible_at = excluded.eligible_at,
-      trace_audited_at = excluded.trace_audited_at,
-      probation_until = CASE WHEN app_usage_guard_state.status = 'exempt' THEN NULL ELSE excluded.probation_until END,
-      consecutive_over_limit = 0,
-      reason_code = CASE WHEN app_usage_guard_state.status = 'exempt' THEN app_usage_guard_state.reason_code ELSE NULL END,
-      decision_json = CASE WHEN app_usage_guard_state.status = 'exempt' THEN app_usage_guard_state.decision_json ELSE NULL END,
-      artifact_cache_key = COALESCE(excluded.artifact_cache_key, app_usage_guard_state.artifact_cache_key),
-      suspended_at = NULL,
-      quarantine_version = NULL,
-      quarantine_attempts = 0,
-      next_retry_at = NULL,
-      updated_at = excluded.updated_at
-    RETURNING status, probation_until, reason_code
-  `).bind(
-    input.appId,
-    input.dispatchScriptName,
-    input.orgId,
-    input.workspaceId,
-    input.scriptName,
-    status,
-    input.scriptVersion,
-    now,
-    now,
-    probationUntil,
-    input.artifactCacheKey ?? null,
-    now,
-  ).first<{ status: "active" | "probation" | "exempt"; probation_until: number | null; reason_code: string | null }>();
-  if (!stored) return { status, probationUntil, reasonCode: null };
-  return { status: stored.status, probationUntil: stored.probation_until, reasonCode: stored.reason_code };
+  return { status: "active", probationUntil: null, reasonCode: null };
 }
 
-export function isUsageGuardRecovery(status: unknown): boolean {
-  return status === "suspending" || status === "suspended" || status === "error";
+/**
+ * 判斷某個狀態是否代表「從暫停中復原」的部署（原實作：suspending／suspended／error）。
+ * Free Tier 永遠不會進入這些狀態，一律 false。
+ */
+export function isUsageGuardRecovery(_status: unknown): boolean {
+  return false;
 }

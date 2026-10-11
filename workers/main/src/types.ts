@@ -1,11 +1,11 @@
 /**
  * Shared types and constants for the main worker
+ *
+ * Free Tier：容器 / R2 / 佇列 / 瀏覽器渲染 / Lake 等付費綁定已移除，
+ * 這裡保留同名的「占位型別」只為讓未涉及付費功能的檔案仍能通過型別檢查；
+ * 實際綁定不存在於 wrangler.jsonc，因此相關程式碼路徑永遠不會被觸發。
  */
 
-import type {
-  LakeStream,
-  ToolCallLakeRecord,
-} from "./lake-streams.js";
 import type { ChatEnv } from "./chat-thread-do.js";
 import type { DOEnv } from "./auth.js";
 import type { DataProxyEnv } from "./data-proxy.js";
@@ -18,14 +18,18 @@ import type {
   SlackTeamRegistryDO,
   TelegramRegistryDO,
 } from "./channel-registries.js";
+import type { ArtifactsRepo } from "./workspace-filesystem-do.js";
+import type { DispatcherBinding } from "./workspace-app-fetcher.js";
+import type { AnalysisContainer } from "./analysis-container.js";
+import type { ProjectBuildContainer } from "./project-build-container.js";
+import type { DbQueryContainer } from "./db-query-container.js";
+import type { LakeStream, ToolCallLakeRecord } from "./lake-streams.js";
 import type { AppScreenshotJob } from "./screenshot-queue.js";
 import type { SlackEventQueueMessage } from "./slack-types.js";
 import type {
   DiscordBridgeFetcher,
   DiscordEventQueueMessage,
 } from "./discord-types.js";
-import type { ArtifactsRepo } from "./workspace-filesystem-do.js";
-import type { DispatcherBinding } from "./workspace-app-fetcher.js";
 
 interface ArtifactsBinding {
   create(
@@ -57,7 +61,7 @@ export interface Env
   WORKER_LOGS: DurableObjectNamespace<WorkerLogsDO>;
   // Unified analysis container (notebooks + shell + DuckDB) on the native DO
   // container API; one warm container per workspace (analysis-container.ts).
-  ANALYSIS_SANDBOX?: DurableObjectNamespace<import('./analysis-container.js').AnalysisContainer>;
+  ANALYSIS_SANDBOX?: DurableObjectNamespace<AnalysisContainer>;
   // R2 bucket mounts of native containers (sandbox-mounts.ts). 1.0 cannot
   // mount through a binding, so on Cloudflare the mounts sign with an R2 API
   // token: the bucket names are vars, the key pair is secret (access key id =
@@ -68,11 +72,11 @@ export interface Env
   R2_S3_ACCESS_KEY_ID?: string;
   R2_S3_SECRET_ACCESS_KEY?: string;
   // Warm native-toolchain build container for DO+R2-backed projects (per-org).
-  PROJECT_BUILD_SANDBOX?: DurableObjectNamespace<import('./project-build-container.js').ProjectBuildContainer>;
+  PROJECT_BUILD_SANDBOX?: DurableObjectNamespace<ProjectBuildContainer>;
   // Trusted query-execution container with static-IP database egress via the
   // sandbox-host SOCKS relay (docs/db-egress-relay.md).
   // Served by DbQueryContainer (native DO container API, Sandbox SDK 1.0).
-  DB_QUERY_SANDBOX?: DurableObjectNamespace<import('./db-query-container.js').DbQueryContainer>;
+  DB_QUERY_SANDBOX?: DurableObjectNamespace<DbQueryContainer>;
   // Static-IP database egress relay coordinates (see infra/db-egress-relay/):
   // hostname is a var; the token/credential pairs are secrets.
   DB_EGRESS_RELAY_HOSTNAME?: string;

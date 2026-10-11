@@ -10,8 +10,23 @@
 
 本項目修改自 [qaml-ai/camelAI](https://github.com/qaml-ai/camelAI)（MIT License）：
 - 原項目：`an AI coding assistant platform built on Cloudflare Workers and Durable Objects`
-- 修改原因：原項目依賴 R2、Durable Objects 容器、Queues 等付費/高級功能，無法完全在 Free 層運行
-- 本項目保留核心：Durable Objects（ChatThreadDO）、D1 數據庫、KV 命名空間、Workers AI
+- 修改原因：原項目依賴 R2、Durable Objects 容器、Queues 等付費／高階資源，無法完全在 Free 層運行
+- 本項目保留核心：Durable Objects（ChatThreadDO、UserDO、OrgDO、SignupDO、WorkspaceDO、WorkspaceFilesystemDO 等）、D1 資料庫、KV 命名空間、Workers AI、完整 React Router Web UI
+
+### 已刪除的高階／付費功能
+
+| 功能 | 相關資源 | 處理方式 |
+|------|----------|----------|
+| 計費／訂閱／額度 | Stripe、paywall、credit packs、用量限額 | 頁面與 API 路由刪除；殘存的方案／限額介面一律視為「未受限」 |
+| Notebook 與程式碼執行 | Sandbox 容器（`ANALYSIS_SANDBOX`） | 執行路徑刪除；`.ipynb` 唯讀預覽仍保留（純靜態渲染） |
+| 專案建置與部署 | 建置容器（`PROJECT_BUILD_SANDBOX`）、Dispatch Nest、Worker Loader | 部署／建置流程刪除 |
+| SQL 連線查詢 | 查詢容器（`DB_QUERY_SANDBOX`）、DB egress relay | 查詢與倉儲匯出刪除；其他 OAuth 型整合不受影響 |
+| 大檔暫存／倉儲匯出 | R2 bucket | 匯出與暫存路徑刪除 |
+| 網頁截圖／瀏覽器操作 | Browser Rendering（`BROWSER`） | 截圖佇列與渲染路徑刪除 |
+| Slack／Discord 訊息通道 | Queues、Discord bridge 服務綁定 | 佇列處理器與路由刪除（僅保留安全的 no-op 介面） |
+| 自動化 Workflow | Workflows 綁定 | 類別保留為佔位，呼叫即明確報錯 |
+
+> 說明：上列表章的 **UI 入口與 API 路由都已移除**；少數仍被底層引用的模組改寫為「Free Tier 佔位模組」，只留型別與符號，實際呼叫會拋出 `Free Tier：已移除○○` 的明確錯誤，不會靜默失敗。
 
 ---
 

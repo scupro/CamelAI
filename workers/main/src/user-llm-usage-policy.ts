@@ -1,9 +1,21 @@
+/**
+ * Free Tier stub：使用者 LLM 用量限額檢查。
+ *
+ * 用量限額與計費控管已從 Free Tier 移除，原本的實作模組跟著刪除，
+ * 但下層程式（agent-runtime/run-gates.ts、agent-runtime/thread-runtime.ts、
+ * ai-virtual-binding.ts）仍然 import 本檔，因此保留呼叫端需要的符號與型別：
+ * - UserLlmUsageLimitErrorCode 與 UserLlmUsageLimitError 沿用原版定義（Free Tier 不會拋出）；
+ * - UserLlmUsagePolicyStub／UserLlmUsagePolicyContext 維持原介面，供呼叫端推導參數型別；
+ * - assertUserLlmUsageAccess 保留呼叫端使用的引數，回傳 undefined 代表放行，
+ *   不拋錯、不阻擋任何模型呼叫。
+ * 註：原版的記錄觀測事件與限額比對邏輯一併移除，只依賴仍然存在的用量型別模組。
+ */
 import type {
   CheckUserLlmUsageAccessInput,
   UserLlmUsageAccessResult,
   UserLlmUsageLimitStatus,
-} from "./identity/org/usage-controls";
-import { recordObservabilityEvent, type ObservabilityEnv } from "./observability";
+} from "./identity/org/usage-controls.js";
+import type { ObservabilityEnv } from "./observability.js";
 
 export type UserLlmUsageLimitErrorCode =
   | "limit_exceeded"
@@ -11,10 +23,14 @@ export type UserLlmUsageLimitErrorCode =
   | "usage_policy_unavailable";
 
 function windowLabel(limit: UserLlmUsageLimitStatus | null): string {
-  if (!limit) return "configured rolling window";
-  return limit.label?.trim() || `${limit.window_hours}-hour window`;
+  if (!limit) return "設定的滾動時間窗口";
+  return limit.label?.trim() || `${limit.window_hours} 小時的時間窗口`;
 }
 
+/**
+ * 用量限額相關的錯誤類別。Free Tier 不做限額阻擋，因此不會被拋出；
+ * 這個類別只保留給呼叫端辨識錯誤形態（instanceof 檢查）與訊息格式使用。
+ */
 export class UserLlmUsageLimitError extends Error {
   constructor(
     readonly code: UserLlmUsageLimitErrorCode,
@@ -26,19 +42,20 @@ export class UserLlmUsageLimitError extends Error {
     let message: string;
     if (code === "limit_exceeded") {
       const retry = blocking?.retry_at_ms
-        ? ` Try again after ${new Date(blocking.retry_at_ms).toISOString()}.`
+        ? ` 請於 ${new Date(blocking.retry_at_ms).toISOString()} 之後再試。`
         : "";
-      message = `LLM usage limit ${windowLabel(blocking)} reached (${(blocking?.spent_usd ?? 0).toFixed(6)} USD spent of ${(blocking?.limit_usd ?? 0).toFixed(6)} USD).${retry}`;
+      message = `已達到 LLM 用量上限（${windowLabel(blocking)}：已使用 ${(blocking?.spent_usd ?? 0).toFixed(6)} 美元／上限 ${(blocking?.limit_usd ?? 0).toFixed(6)} 美元）。${retry}`;
     } else if (code === "pricing_unavailable") {
-      message = `LLM usage is blocked because ${provider || "this provider"}/${model || "this model"} is unpriced or the active limit window contains unpriced LLM usage. Configure an exact pricing override in the admin API.`;
+      message = `無法取得 ${provider || "此供應商"}／${model || "此模型"} 的定價資訊，因此用量政策無法判定。請由管理者在管理 API 設定準確的定價覆寫。`;
     } else {
-      message = "LLM usage policy could not be verified. The provider was not called; try again or ask the operator to check the organization usage service.";
+      message = "無法確認 LLM 用量政策，尚未呼叫供應商。請稍後重試，或請管理者檢查組織的用量服務。";
     }
     super(message);
     this.name = "UserLlmUsageLimitError";
   }
 }
 
+/** 呼叫端傳入的 DO stub 介面：只要具備用量限額檢查方法即可。 */
 export interface UserLlmUsagePolicyStub {
   checkUserLlmUsageAccess(input: CheckUserLlmUsageAccessInput): Promise<UserLlmUsageAccessResult>;
 }
@@ -53,63 +70,15 @@ export interface UserLlmUsagePolicyContext {
   model: string;
 }
 
+/**
+ * Free Tier 一律放行：不做用量限額阻擋，因此不查詢限額、不拋出錯誤，
+ * 直接回傳 undefined（原本的呼叫端不會使用回傳值）。
+ */
 export async function assertUserLlmUsageAccess(
   stub: UserLlmUsagePolicyStub,
   context: UserLlmUsagePolicyContext,
-): Promise<UserLlmUsageAccessResult> {
-  let access: UserLlmUsageAccessResult;
-  try {
-    access = await stub.checkUserLlmUsageAccess({
-      user_id: context.userId,
-      provider: context.provider,
-      model: context.model,
-    });
-  } catch {
-    recordObservabilityEvent(context.env, {
-      event: "user_llm_usage_limit_denied",
-      severity: "error",
-      component: "llm_usage_policy",
-      operation: "check_user_llm_usage_access",
-      status: "usage_policy_unavailable",
-      orgId: context.orgId,
-      workspaceId: context.workspaceId,
-      threadId: context.threadId,
-      userId: context.userId,
-      provider: context.provider,
-      model: context.model,
-    });
-    throw new UserLlmUsageLimitError(
-      "usage_policy_unavailable",
-      null,
-      context.provider,
-      context.model,
-    );
-  }
-  if (access.allowed) return access;
-
-  const blocking = access.blocking_limit;
-  recordObservabilityEvent(context.env, {
-    event: "user_llm_usage_limit_denied",
-    severity: "warn",
-    component: "llm_usage_policy",
-    operation: "check_user_llm_usage_access",
-    status: access.reason,
-    orgId: context.orgId,
-    workspaceId: context.workspaceId,
-    threadId: context.threadId,
-    userId: context.userId,
-    provider: context.provider,
-    model: context.model,
-    extraCounts: [
-      blocking?.window_hours ?? 0,
-      blocking?.spent_usd ?? 0,
-      blocking?.limit_usd ?? 0,
-    ],
-  });
-  throw new UserLlmUsageLimitError(
-    access.reason === "pricing_unavailable" ? "pricing_unavailable" : "limit_exceeded",
-    access,
-    context.provider,
-    context.model,
-  );
+): Promise<UserLlmUsageAccessResult | undefined> {
+  void stub;
+  void context;
+  return undefined;
 }

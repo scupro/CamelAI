@@ -1,17 +1,24 @@
+// Free Tier：已移除計費／升等流程，此模組僅保留型別與 props 介面
+//
+// 這裡只留下純格式化與標籤函式（前端仍會 import），
+// 涉及「是否有付費權限」的判斷在 Free Tier 一律回傳 true。
+
 import type { BillingStatus, Organization } from "@/types";
 
+/** Free Tier：不做付費判斷，一律視為啟用。 */
 export function isBillingActive(
   status: BillingStatus | null | undefined,
 ): boolean {
-  return (
-    status === "trialing" || status === "active" || status === "enterprise"
-  );
+  void status;
+  return true;
 }
 
+/** Free Tier：不做付費判斷，一律允許使用工作區功能。 */
 export function canUsePaidWorkspace(
   status: BillingStatus | null | undefined,
 ): boolean {
-  return isBillingActive(status);
+  void status;
+  return true;
 }
 
 export function billingStatusLabel(
@@ -19,18 +26,18 @@ export function billingStatusLabel(
 ): string {
   switch (status) {
     case "trialing":
-      return "Trial";
+      return "試用中";
     case "active":
-      return "Active";
+      return "生效中";
     case "enterprise":
-      return "Enterprise";
+      return "企業方案";
     case "past_due":
-      return "Past due";
+      return "逾期未付款";
     case "canceled":
-      return "Canceled";
+      return "已取消";
     case "inactive":
     default:
-      return "Free";
+      return "免費";
   }
 }
 
@@ -59,11 +66,11 @@ export function formatCreditAmount(
     maximumFractionDigits?: number;
   } = {},
 ): string {
-  const formatter = new Intl.NumberFormat("en-US", {
+  const formatter = new Intl.NumberFormat("zh-TW", {
     minimumFractionDigits: options.minimumFractionDigits ?? 2,
     maximumFractionDigits: options.maximumFractionDigits ?? 2,
   });
-  return `${formatter.format(credits)} credits`;
+  return `${formatter.format(credits)} 點額度`;
 }
 
 export function formatCreditBalance(cents: number): string {
@@ -89,17 +96,17 @@ export function getBillingStatusDescription(
 ): string {
   switch (org.billing_status) {
     case "trialing":
-      return "Your subscription is active with capped included credits.";
+      return "方案已啟用，內含額度有上限。";
     case "active":
-      return "Your subscription is active with included credits.";
+      return "方案已啟用，並含每月額度。";
     case "enterprise":
-      return "Your organization is billed outside Stripe and does not need a subscription or credits.";
+      return "貴組織的計費於 Stripe 之外處理，不需要訂閱或額度。";
     case "past_due":
-      return "Your payment is past due. Fix it to restore premium models.";
+      return "付款已逾期，請完成付款以恢復進階模型。";
     case "canceled":
-      return "Your subscription was canceled.";
+      return "訂閱已取消。";
     case "inactive":
     default:
-      return "Pay as you go uses prepaid credits or your own API key.";
+      return "此環境不需要付費，可直接使用。";
   }
 }

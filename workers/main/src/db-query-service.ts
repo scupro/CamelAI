@@ -1,53 +1,18 @@
 /**
- * Worker-side orchestration for DbQueryContainer — the static-IP database query
- * path (docs/db-egress-relay.md).
+ * SQL 查詢服務的 Worker 端編排 —— Free Tier 佔位模組。
  *
- * The query logic is NOT baked into the container image. It lives in
- * `db-query-sandbox-assets/runner/db-query-runner.mjs`, is embedded into this
- * worker as a string (below), and is run in the container per call by piping
- * that string into `node` over stdin in a single stateless `exec` (no file is
- * written). Changing how we query is therefore a worker-only change — no image
- * rebuild. The image only carries the runtime (node), the drivers
- * (pg/mysql2/socks at /opt/db-query-runner/node_modules), and cloudflared.
+ * Free Tier 已移除容器 / sandbox / R2 倉儲 / 程式碼執行綁定，本檔僅保留型別介面
+ * 與純函式（容器名稱產生器、短暫錯誤判斷），讓仍參照本模組的 data-proxy.ts、
+ * db-query-compat.ts 與 admin routes 能通過型別檢查；實際取得容器、執行查詢或
+ * 匯出的函式一律拋出明確錯誤。
  *
- * Callers are responsible for AUTHORIZATION: by the time runDbQuery is
- * invoked, the caller must already have decided this principal may query this
- * database. Callers: the legacy data-proxy compat surface (data-proxy.ts —
- * connection MCP, the DATA_PROXY user-app binding, sandbox container routes)
- * and the admin smoke route (POST /api/admin/db-query-sandbox/query).
+ * 原始實作：查詢邏輯內嵌在 db-query runner 來源中，於 DbQueryContainer 以單次
+ * `exec` 透過 stdin 管線送給 node 執行（不落地檔案），並可經由 SOCKS 中繼站取得
+ * 固定出口 IP。Free Tier 沒有容器，這些路徑都不存在。
  */
 
-// Embedded at build time; the Vite and Wrangler builds alias this virtual
-// module to the runner source using their respective raw-text mechanisms.
-import RUNNER_SOURCE from "virtual:db-query-runner-source";
-import { ContainerStartFailedError, containerStartWorstCaseMs, DB_QUERY_START_POLICY } from "./container-start.js";
-import {
-  createSandboxExecDeadline,
-  isSandboxDeadlineExceededError,
-  SANDBOX_EXEC_DEADLINE_GRACE_MS,
-  SandboxDeadlineExceededError,
-  type SandboxDeadlineExceededEvent,
-  type SandboxExecDeadline,
-} from "./sandbox-exec-deadline.js";
-import {
-  DB_RELAY_LOCAL_PORT,
-  DbQueryContainerUnavailableError,
-  type DbQueryContainerStub,
-  type DbRunnerOutput,
-} from "./db-query-contracts.js";
-
-export {
-  DB_QUERY_RUNNER_DIR,
-  DB_RELAY_LOCAL_PORT,
-  DbQueryContainerUnavailableError,
-  dbQueryContainerKey,
-  getDbQueryContainer,
-  type DbQueryContainerStub,
-  type DbRelayForwarderConfig,
-  type DbRunnerOutput,
-} from "./db-query-contracts.js";
-
-/** Relay coordinates + credentials, from worker env (never baked in images). */
+// ── 出口中繼站（egress relay）──────────────────────────────────────────
+/** 中繼站座標與憑證（來自 Worker 環境變數，絕不寫進映像檔）。 */
 export interface DbEgressRelayConfig {
   hostname: string;
   socksUsername: string;
@@ -65,86 +30,46 @@ export interface DbEgressRelayEnv {
 }
 
 /**
- * Relay config for this environment, or null for direct mode.
+ * 此環境的中繼站設定。
  *
- * Only a FULLY-unset relay is direct mode. A PARTIAL config (e.g. hostname set
- * but a SOCKS secret missing after a typo/rollout slip) throws instead of
- * silently degrading: a partial config would skip the forwarder, and every
- * query would then dial the database directly (no static IP) or fail as an
- * opaque network error instead of an obvious config error.
+ * Free Tier 沒有容器中繼站，因此一律回傳 null（＝完全未設定＝直連模式）。
+ * 原實作會在「中繼站只設定了一半」時拋出明確的設定錯誤，而不是無聲地降階。
  */
-export function relayConfigFromEnv(env: DbEgressRelayEnv): DbEgressRelayConfig | null {
-  const hostname = env.DB_EGRESS_RELAY_HOSTNAME?.trim();
-  const socksUsername = env.DB_EGRESS_RELAY_SOCKS_USERNAME;
-  const socksPassword = env.DB_EGRESS_RELAY_SOCKS_PASSWORD;
-
-  if (!hostname) {
-    if (socksUsername || socksPassword) {
-      throw Object.assign(
-        new Error(
-          "DB egress relay SOCKS credentials are set but DB_EGRESS_RELAY_HOSTNAME is missing (partial relay config)",
-        ),
-        { status: 500 },
-      );
-    }
-    return null; // fully unset → direct mode
-  }
-  if (!socksUsername || !socksPassword) {
-    throw Object.assign(
-      new Error(
-        "DB_EGRESS_RELAY_HOSTNAME is set but DB_EGRESS_RELAY_SOCKS_USERNAME/PASSWORD are missing (partial relay config)",
-      ),
-      { status: 500 },
-    );
-  }
-  // The Access service token is a pair: both or neither. Exactly one set (a
-  // typo/rollout slip) would otherwise start `cloudflared access tcp` WITHOUT
-  // the token, and the Access-gated hostname would reject every connection —
-  // surfacing only as a forwarder-readiness timeout, not a config error.
-  const accessClientId = env.DB_EGRESS_RELAY_ACCESS_CLIENT_ID?.trim() || undefined;
-  const accessClientSecret = env.DB_EGRESS_RELAY_ACCESS_CLIENT_SECRET?.trim() || undefined;
-  if (Boolean(accessClientId) !== Boolean(accessClientSecret)) {
-    throw Object.assign(
-      new Error(
-        "DB_EGRESS_RELAY_ACCESS_CLIENT_ID and DB_EGRESS_RELAY_ACCESS_CLIENT_SECRET must be set together (partial relay config)",
-      ),
-      { status: 500 },
-    );
-  }
-  return { hostname, socksUsername, socksPassword, accessClientId, accessClientSecret };
+export function relayConfigFromEnv(_env: DbEgressRelayEnv): DbEgressRelayConfig | null {
+  return null;
 }
 
+// ── 查詢請求與結果的契約型別 ───────────────────────────────────────────
 export interface DbQueryTarget {
   host: string;
   port: number;
   user: string;
   password: string;
-  /** May be empty ONLY for mysql (Go data-proxy parity). */
+  /** 只有 mysql 可以留空（與 Go data-proxy 行為一致）。 */
   database: string;
   /**
-   * default "require"; "verify-full" enables CA + hostname verification,
-   * "verify-ca" chain-only, "prefer" (mysql) tries TLS then falls back to
-   * plaintext when the server lacks it.
+   * 預設 "require"；"verify-full" 開啟憑證鏈與主機名稱驗證，"verify-ca" 只驗證
+   * 憑證鏈，"prefer"（mysql）先試 TLS，伺服器不支援時退回明文。
    */
   sslMode?: "disable" | "require" | "verify-ca" | "verify-full" | "prefer";
-  /** mysql only; identifier, e.g. "utf8mb4" (the driver default). */
+  /** 只有 mysql 使用；識別碼，例如 "utf8mb4"（驅動程式預設值）。 */
   charset?: string;
 }
 
 export interface DbQueryRequest {
-  /** "query" (default): point query over exec; "export": streaming Parquet extract. */
+  /** "query"（預設）：單次點對點查詢；"export"：串流 Parquet 匯出。 */
   op?: "query" | "export";
   engine: "postgres" | "mysql" | "mssql";
-  /** "read" (default) runs in a rolled-back transaction; "modify" returns rowsAffected. */
+  /** "read"（預設）在會回滾的交易中執行；"modify" 回傳 rowsAffected。 */
   mode?: "read" | "modify";
   target: DbQueryTarget;
   sql: string;
-  /** Positional array for postgres/mysql; named record for mssql. */
+  /** postgres/mysql 使用 positional 陣列；mssql 使用具名 record。 */
   params?: unknown[] | Record<string, unknown>;
-  /** null = uncapped rows (the byte cap still bounds the response). */
+  /** null ＝不限制列數（仍受位元組上限約束）。 */
   rowLimit?: number | null;
   timeoutMs?: number;
-  /** Serialized-result size cap for op "query" (default 8 MiB in the runner). */
+  /** op "query" 的序列化結果大小上限（runner 內預設 8 MiB）。 */
   maxResponseBytes?: number;
 }
 
@@ -156,42 +81,95 @@ export type DbQueryResult =
       rowCount: number;
       truncated: boolean;
       durationMs: number;
-      /** Present for mode "modify". */
+      /** 只有 mode "modify" 會帶。 */
       rowsAffected?: number[];
     }
   | { ok: false; error: { message: string; code?: string; number?: number; status?: number } };
 
+export type DbExportResult =
+  | { ok: true; rowCount: number; bytes: number; durationMs: number }
+  | { ok: false; error: { message: string; code?: string; number?: number; status?: number } };
+
+// ── 容器契約（原 db-query-contracts.ts 已隨付費功能移除，此處只留型別）──
+/** 容器內 `cloudflared access tcp` 轉發器監聽的本地埠。 */
+export const DB_RELAY_LOCAL_PORT = 11080;
+
+/** 中繼站轉發器需要的資訊：要連到哪裡，以及 Access service token。 */
+export interface DbRelayForwarderConfig {
+  hostname: string;
+  accessClientId?: string;
+  accessClientSecret?: string;
+}
+
+/** runner 單次執行的輸出。`timedOut`：容器端的時間上限觸發。 */
+export interface DbRunnerOutput {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+}
+
+/**
+ * Worker 端會呼叫的 DbQueryContainer 介面（也是測試注入假物件時的形狀）。
+ * Free Tier 沒有對應實作，只保留型別。
+ */
+export interface DbQueryContainerStub {
+  /** 啟動容器；能在上面執行命令後 resolve。 */
+  start(): Promise<void>;
+  /** 除非轉發器已在啟動或已在運作，否則啟動它。 */
+  startRelayForwarder(relay: DbRelayForwarderConfig): Promise<void>;
+  /** 轉發器的本地埠是否已經可以接受連線。 */
+  relayForwarderReady(): Promise<boolean>;
+  /** 以 `env` 執行 runner 一次，容器端由 `timeoutMs` 設為上限。 */
+  runRunner(env: Record<string, string>, timeoutMs: number): Promise<DbRunnerOutput>;
+  /** 讓 `/<prefix>` 可寫，供匯出寫進倉儲桶。 */
+  prepareWarehouseExport(prefix: string): Promise<void>;
+  /** 在 runDbExport 返回之前，讓匯出在桶中正式落地。 */
+  publishWarehouseExport(prefix: string, exportPath: string): Promise<void>;
+  /** 停止容器，讓下一次呼叫啟動全新的容器。 */
+  destroy(reason?: { operation: string; error?: string }): Promise<{ destroyed: boolean }>;
+}
+
+/** 等待中的容器操作超出客戶端期限時的事件內容。 */
+export interface SandboxDeadlineExceededEvent {
+  operation: string;
+  declaredTimeoutMs: number | undefined;
+  budgetMs: number;
+  waitedMs: number;
+  /** 期限已耗盡、我們拒絕把工作派出去時為 false。 */
+  started?: boolean;
+}
+
+/** 一次查詢所需的相依物件與回呼（環境與遙測由呼叫端持有）。 */
 export interface DbQueryDeps {
   container: DbQueryContainerStub;
   /**
-   * Telemetry sink for a query we abandoned on its client-side deadline. The
-   * caller owns the observability env, so it supplies the recorder.
+   * 我們放棄等待某次查詢時的遙測出口。呼叫端擁有 observability env，
+   * 所以由它提供記錄器。
    */
   onDeadlineExceeded?: (event: SandboxDeadlineExceededEvent) => void;
   /**
-   * Static-IP egress relay, or null to dial the database DIRECTLY from the
-   * container's own Cloudflare IP (the opt-out when no relay is configured).
+   * 固定 IP 出口中繼站；null 表示直接從容器自己的 Cloudflare IP 連資料庫
+   * （沒有中繼站時的選擇性退路，沒有固定 IP 的保證）。
    */
   relay: DbEgressRelayConfig | null;
-  /** Max ms to wait for the cloudflared forwarder to come up (default 30s). */
+  /** 等待 cloudflared 轉發器就緒的最大毫秒數（預設 30 秒）。 */
   readinessTimeoutMs?: number;
   /**
-   * Telemetry sink for a call retried after a transient container failure
-   * (see isTransientDbContainerError). The error is the one we retried past.
+   * 因容器短暫故障而重試時的遙測出口；`error` 是我們重試過去的那個錯誤。
    */
   onTransientRetry?: (event: { operation: "db_query" | "db_export"; dispatched: boolean; error: unknown }) => void;
-  /** Test seam for the pause before the transient retry. */
+  /** 短暫重試之前那段等待的測試注入點。 */
   sleep?: (ms: number) => Promise<void>;
 }
 
 /**
- * Failures of the container/DO transport itself, as opposed to the database or
- * the SQL: the container was stopped under the call
- * (DbQueryContainerUnavailableError), or the RPC hop to the DO dropped
- * ("Network connection lost."). The next call starts a fresh container.
+ * 容器 / Durable Object 傳輸層本身的失敗（不是資料庫或 SQL 的問題）：容器在呼叫
+ * 過程中被停止，或到 DO 的 RPC 跳點斷掉（"Network connection lost."）。
+ * 下一次呼叫會啟動一個新容器。
  *
- * Deliberately excludes SandboxDeadlineExceededError: a deadline means the
- * container is slow or wedged, and a retry would double the wait.
+ * 刻意不含 SandboxDeadlineExceededError：期限到了代表容器很慢或卡死，
+ * 重試只会讓等待時間加倍。
  */
 const TRANSIENT_CONTAINER_ERROR_PATTERNS: readonly RegExp[] = [
   /network connection lost/i,
@@ -200,220 +178,61 @@ const TRANSIENT_CONTAINER_ERROR_PATTERNS: readonly RegExp[] = [
   /durable object (?:reset|storage operation exceeded)|durable object's code has been updated/i,
 ];
 
+/**
+ * 容器不在執行中而無法操作：啟動失敗，或在呼叫過程中停止。屬於短暫錯誤，
+ * 下一次呼叫會啟動新容器，所以 db-query-service 會重試一次。
+ *
+ * 在 Durable Object 內部抛出、於 Worker 端辨識：DO 的 RPC 跳點只會送來一個
+ * 原名稱被前綴在訊息裡的普通 `Error`，因此呼叫端使用 `is()` 而非 `instanceof`。
+ */
+export class DbQueryContainerUnavailableError extends Error {
+  static is(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+    return error.name === "DbQueryContainerUnavailableError" ||
+      error.message.startsWith("DbQueryContainerUnavailableError: ");
+  }
+
+  constructor(operation: string, cause: unknown) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    super(`DB query container is not running (${operation}): ${detail}`, { cause });
+    this.name = "DbQueryContainerUnavailableError";
+  }
+}
+
+/**
+ * 判斷某個錯誤是否屬於「可以重試一次」的容器短暫故障（純名稱與訊息判斷）。
+ *
+ * Free Tier 沒有容器，所以不再引用已移除的逾時類別；原實作會排除的
+ * SandboxDeadlineExceededError（等待過久）與 ContainerStartFailedError
+ * （DO 內部已重試過啟動）在此以名稱同等排除。
+ */
 export function isTransientDbContainerError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  if (isSandboxDeadlineExceededError(error)) return false;
-  // The DO already destroyed and retried that start; another round would only
-  // double the wait.
-  if (ContainerStartFailedError.is(error)) return false;
+  if (error.name === "SandboxDeadlineExceededError") return false;
+  if (error.name === "ContainerStartFailedError") return false;
   if (DbQueryContainerUnavailableError.is(error)) return true;
   const text = `${error.name}: ${error.message}`;
   return TRANSIENT_CONTAINER_ERROR_PATTERNS.some((pattern) => pattern.test(text));
 }
 
-/** Pause before the one transient retry, so a rolling container can come back. */
+/** 短暫容器故障後、重試之前的等待時間，讓正在輪替的容器有機會回來。 */
 export const DB_QUERY_TRANSIENT_RETRY_DELAY_MS = 1_000;
 
 /**
- * Run `attempt` and, on a transient container failure, run it exactly once more.
- *
- * `attempt` calls `markDispatched()` right before it hands the SQL to the
- * container. Before that point nothing has touched the database and a retry
- * is always safe. After it, only a caller that can safely run the work twice
- * (a read, which the runner rolls back) may retry: a `modify` statement may
- * already have committed.
- */
-async function withTransientRetry<T>(
-  deps: DbQueryDeps,
-  operation: "db_query" | "db_export",
-  retryAfterDispatch: boolean,
-  attempt: (markDispatched: () => void) => Promise<T>,
-): Promise<T> {
-  let dispatched = false;
-  try {
-    return await attempt(() => {
-      dispatched = true;
-    });
-  } catch (error) {
-    if (!isTransientDbContainerError(error) || (dispatched && !retryAfterDispatch)) throw error;
-    console.warn("[db-query] retrying after a transient container failure", {
-      operation,
-      dispatched,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    deps.onTransientRetry?.({ operation, dispatched, error });
-    await (deps.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))))(
-      DB_QUERY_TRANSIENT_RETRY_DELAY_MS,
-    );
-    return await attempt(() => {});
-  }
-}
-
-const DEFAULT_READINESS_TIMEOUT_MS = 30_000;
-const READINESS_POLL_INTERVAL_MS = 500;
-/** Extra wall-clock beyond the query timeout for node start + driver import + connect. */
-const EXEC_OVERHEAD_MS = 15_000;
-/** Runner-side default when the caller declares no timeout. */
-const DEFAULT_QUERY_TIMEOUT_MS = 30_000;
-const DEFAULT_EXPORT_TIMEOUT_MS = 300_000;
-/**
- * Client-side backstop for a cold container start. The DO bounds the start
- * itself (DB_QUERY_START_POLICY: a 30s attempt, destroy, one retry), so this
- * only fires when the DO never answers; it sits just above the DO's worst case.
- */
-const DB_QUERY_CONTAINER_STARTUP_TIMEOUT_MS = containerStartWorstCaseMs(DB_QUERY_START_POLICY);
-
-/**
- * Client-side deadline for one runner exec.
- *
- * The container already enforces `timeout` on the command, and that stays the
- * primary bound (it produces the runner's own error). This only stops the AWAIT
- * from outliving it: a container that never answers used to hold the caller —
- * an agent turn, an admin request, a scheduled export — indefinitely. The
- * budget is the container timeout (which already carries this op's overhead)
- * plus the marshalling grace.
- */
-function dbQueryDeadline(
-  deps: DbQueryDeps,
-  operation: "db_query" | "db_export" | "db_export_publish",
-  containerTimeoutMs: number,
-): SandboxExecDeadline {
-  return createSandboxExecDeadline({
-    operation,
-    declaredTimeoutMs: containerTimeoutMs,
-    defaultTimeoutMs: containerTimeoutMs,
-    maxTimeoutMs: containerTimeoutMs,
-    graceMs: SANDBOX_EXEC_DEADLINE_GRACE_MS,
-    onExceeded: (event) => deps.onDeadlineExceeded?.(event),
-  });
-}
-
-/**
- * Client-side deadline for the whole relay/mount PRELUDE of one call.
- *
- * The prelude's own awaits used to be unbounded: `forwarderReady`'s 5s
- * `timeout` is enforced CONTAINER-side only (the SDK's http transport issues
- * `containerFetch` with no AbortSignal), and the poll loop's
- * `Date.now() >= deadline` check only runs AFTER a probe settles — so a wedged
- * container that never answers meant the check was never reached and
- * `runDbQuery` hung until the caller's own ceiling (a 20-minute agent turn).
- *
- * One deadline covers every prelude await, and `SandboxExecDeadline` shares its
- * budget across `run` calls, so the poll loop cannot multiply the wait.
- */
-function dbQuerySetupDeadline(deps: DbQueryDeps, operation: string): SandboxExecDeadline {
-  const readinessMs = deps.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
-  return createSandboxExecDeadline({
-    operation,
-    declaredTimeoutMs: readinessMs,
-    defaultTimeoutMs: readinessMs,
-    maxTimeoutMs: readinessMs,
-    graceMs: SANDBOX_EXEC_DEADLINE_GRACE_MS,
-    onExceeded: (event) => deps.onDeadlineExceeded?.(event),
-  });
-}
-
-/**
- * Cold container provisioning has its own budget. Keep it outside the warm
- * relay/mount setup deadline: otherwise a slow cold start could consume the
- * whole setup budget before the first forwarder probe.
- */
-async function startDbQueryContainer(deps: DbQueryDeps): Promise<void> {
-  await createSandboxExecDeadline({
-    operation: "db_query_container_start",
-    declaredTimeoutMs: DB_QUERY_CONTAINER_STARTUP_TIMEOUT_MS,
-    defaultTimeoutMs: DB_QUERY_CONTAINER_STARTUP_TIMEOUT_MS,
-    maxTimeoutMs: DB_QUERY_CONTAINER_STARTUP_TIMEOUT_MS,
-    graceMs: SANDBOX_EXEC_DEADLINE_GRACE_MS,
-    onExceeded: (event) => deps.onDeadlineExceeded?.(event),
-  }).run(() => deps.container.start());
-}
-
-/**
- * Make sure the container's `cloudflared access tcp` forwarder is running and
- * its local port is accepting. Relay credentials travel as process env, never
- * image contents; starting is idempotent container-side, so concurrent calls
- * share one forwarder.
- *
- * Two bounds, deliberately both: `setup` stops calls that never ANSWER, and
- * the wall-clock check below stops probes that answer but keep saying "not
- * ready" (the more useful diagnostic, so it keeps its message).
- */
-async function ensureRelayForwarder(
-  deps: DbQueryDeps,
-  relay: DbEgressRelayConfig,
-  setup: SandboxExecDeadline,
-): Promise<void> {
-  const deadline = Date.now() + (deps.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS);
-  if (await setup.run(() => deps.container.relayForwarderReady())) return;
-
-  await setup.run(() => deps.container.startRelayForwarder({
-    hostname: relay.hostname,
-    accessClientId: relay.accessClientId,
-    accessClientSecret: relay.accessClientSecret,
-  }));
-
-  while (!(await setup.run(() => deps.container.relayForwarderReady()))) {
-    if (Date.now() >= deadline) {
-      throw new Error(
-        "db-query relay forwarder never became ready (check the relay hostname and the Access service token)",
-      );
-    }
-    await new Promise((resolve) => setTimeout(resolve, READINESS_POLL_INTERVAL_MS));
-  }
-}
-
-/**
- * Run the SETUP half of a call (container start, forwarder prelude) and, when
- * any of it outlives its client-side deadline, ask the DO to destroy the
- * container so the NEXT call boots clean.
- *
- * Without this a wedged container never self-healed: prod saw one workspace
- * fail `db_query_container_start` at its 135s budget on every query for four
- * days (403 in a row) until a manual `destroy()` fixed it instantly.
- *
- * Deliberately narrow: only SandboxDeadlineExceededError from setup. The
- * runner exec's own deadline is a slow QUERY, the forwarder's "never became
- * ready" (probes answer, port stays down) is relay configuration, and the
- * export mount reports its own errors — none of those is fixed by destroying a
- * container other calls may be using. The call still
- * fails, as a DbQueryContainerNotReadyError that tells the agent nothing ran, and
- * there is no in-call retry: a stuck container start is already destroyed and
- * retried once inside the DO (container-start.ts), so reaching this backstop
- * means the DO itself stopped answering.
- */
-async function withWedgedSetupRecovery(deps: DbQueryDeps, run: () => Promise<void>): Promise<void> {
-  try {
-    await run();
-  } catch (error) {
-    // These deadlines are created in this module, so the error is always the
-    // local class (never the name-only RPC shape isSandboxDeadlineExceededError
-    // also accepts).
-    if (error instanceof SandboxDeadlineExceededError) {
-      const restarted = await requestWedgedContainerRestart(deps, error);
-      throw new DbQueryContainerNotReadyError(error, restarted);
-    }
-    throw error;
-  }
-}
-
-/**
- * A setup deadline, reworded for the agent. The generic
- * SandboxDeadlineExceededError text says the work "may already have run" and
- * not to repeat it, which is wrong here: setup finished before the SQL was
- * handed to the container, so nothing reached the database and a retry is safe.
+ * 容器「未能就緒」的錯誤：查詢並沒有送進資料庫，因此重試同一個查詢是安全的。
+ * 原實作由卡死的啟動期限錯誤包裝而成，這裡保留同樣的外觀。
  */
 export class DbQueryContainerNotReadyError extends Error {
   readonly operation: string;
   readonly budgetMs: number;
 
-  constructor(cause: SandboxDeadlineExceededError, restarted: boolean) {
+  constructor(cause: { operation: string; budgetMs: number }, restarted: boolean) {
     super(
-      `The database query container did not become ready: ${cause.operation} did not return within ` +
-        `its ${Math.round(cause.budgetMs / 1000)}s budget, so the query was NOT sent to the database. This is a temporary ` +
-        `infrastructure problem, not a problem with the SQL or the database. ` +
-        (restarted ? "The container has been restarted; " : "") +
-        `retrying the same query is safe.`,
+      `SQL 查詢容器未能就緒：${cause.operation} 未在 ` +
+        `${Math.round(cause.budgetMs / 1000)} 秒的期限內回傳，因此查詢並沒有送進資料庫。` +
+        `這是暫時的基礎設施問題，不是 SQL 或資料庫的問題。` +
+        (restarted ? "容器已重新啟動；" : "") +
+        `重試同一個查詢是安全的。（Free Tier 已移除 SQL 查詢容器。）`,
       { cause },
     );
     this.name = "DbQueryContainerNotReadyError";
@@ -422,168 +241,42 @@ export class DbQueryContainerNotReadyError extends Error {
   }
 }
 
+// ── 純函式：容器實例名稱 ───────────────────────────────────────────────
+/** 某工作區容器的實例名稱（小寫，與 0.12 正規化之後一致）。 */
+export function dbQueryContainerKey(workspaceId: string): string {
+  return `ws-${workspaceId}`.toLowerCase();
+}
+
+// ── Free Tier 已移除的容器操作（保留簽名，呼叫即錯）────────────────────
+/** Free Tier 統一使用的錯誤訊息。 */
+const FREE_TIER_CONTAINER_ERROR = "Free Tier：已移除 SQL 查詢容器（DbQueryContainer）";
+
 /**
- * Best-effort: a failed destroy request must never mask the deadline error.
- * Resolves true only when the DO actually destroyed a running container.
+ * 取得 `key` 對應的 db-query 容器（取自 dbQueryContainerKey()，或 admin 冒煙
+ * 測試的 key）。原實作會沿著 sandbox placement 的世代取得目前那個 DO 的存根。
  */
-async function requestWedgedContainerRestart(
-  deps: DbQueryDeps,
-  error: SandboxDeadlineExceededError,
-): Promise<boolean> {
-  try {
-    // The DO records `db_query_container_destroyed` itself.
-    const outcome = await deps.container.destroy({
-      operation: error.operation,
-      error: `${error.name}: ${error.message}`,
-    });
-    return outcome.destroyed;
-  } catch (restartError) {
-    console.warn("[db-query] wedged container restart request failed", {
-      operation: error.operation,
-      error: restartError instanceof Error ? restartError.message : String(restartError),
-    });
-    return false;
-  }
-}
-
-/** Relay forwarder readiness, deadline-bounded after the container start. */
-async function ensureRelayPrelude(deps: DbQueryDeps, setup: SandboxExecDeadline): Promise<void> {
-  const relay = deps.relay;
-  if (!relay) return;
-  await ensureRelayForwarder(deps, relay, setup);
-}
-
-function parseRunnerOutput(exec: DbRunnerOutput, timeoutMs: number): DbQueryResult {
-  const text = exec.stdout.trim();
-  if (!text) {
-    const cause = exec.timedOut ? `runner timed out after ${timeoutMs}ms` : `runner produced no output (exit ${exec.exitCode})`;
-    return {
-      ok: false,
-      error: {
-        message: `${cause}${exec.stderr ? `: ${exec.stderr.trim().slice(0, 500)}` : ""}`,
-        status: exec.timedOut ? 504 : 502,
-      },
-    };
-  }
-  let parsed: DbQueryResult & { error?: { message?: string; code?: string; number?: number; status?: number } };
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return { ok: false, error: { message: `runner returned non-JSON output: ${text.slice(0, 500)}`, status: 502 } };
-  }
-  if (parsed.ok === true) return parsed;
-  return {
-    ok: false,
-    error: {
-      message: parsed.error?.message ?? `query failed (exit ${exec.exitCode})`,
-      code: parsed.error?.code,
-      number: parsed.error?.number,
-      status: parsed.error?.status,
-    },
-  };
+export function getDbQueryContainer(_env: unknown, _key: string): DbQueryContainerStub {
+  throw new Error(FREE_TIER_CONTAINER_ERROR);
 }
 
 /**
- * Run one worker-authorized query. With `deps.relay` set, it tunnels through
- * the static-IP egress relay; with `deps.relay` null it dials the database
- * directly from the container's own IP (no SOCKS, no forwarder).
- *
- * The runner is shipped and run in a SINGLE stateless `exec`: the source rides
- * in the `DB_RUNNER_SRC` env var and is piped into `node` over stdin. Nothing
- * is written to the container filesystem — no per-call file, no cleanup, no
- * "did we already write it" state. `cwd` is the drivers dir so the runner's
- * bare `import "pg"` resolves against the baked node_modules.
+ * 執行一次已由 Worker 授權的查詢。原實作依 `deps.relay` 決定要透過固定 IP
+ * 中繼站隧道，還是從容器自己的 IP 直接連資料庫。
  */
-export async function runDbQuery(deps: DbQueryDeps, request: DbQueryRequest): Promise<DbQueryResult> {
-  // A read runs in a rolled-back transaction, so running it twice is harmless.
-  const retryAfterDispatch = request.mode !== "modify";
-  return await withTransientRetry(deps, "db_query", retryAfterDispatch, async (markDispatched) => {
-    await withWedgedSetupRecovery(deps, async () => {
-      await startDbQueryContainer(deps);
-      await ensureRelayPrelude(deps, dbQuerySetupDeadline(deps, "db_query_setup"));
-    });
-
-    const containerTimeoutMs = (request.timeoutMs ?? DEFAULT_QUERY_TIMEOUT_MS) + EXEC_OVERHEAD_MS;
-    markDispatched();
-    const exec = await dbQueryDeadline(deps, "db_query", containerTimeoutMs).run(() =>
-      deps.container.runRunner(runnerEnv(deps, request), containerTimeoutMs));
-    return parseRunnerOutput(exec, containerTimeoutMs);
-  });
-}
-
-/** Env for a runner invocation: source + request + optional relay creds. */
-function runnerEnv(deps: DbQueryDeps, request: DbQueryRequest): Record<string, string> {
-  return {
-    DB_RUNNER_SRC: RUNNER_SOURCE,
-    DB_QUERY_REQUEST: JSON.stringify(request),
-    // SOCKS creds present ⇒ runner uses the relay; absent ⇒ direct dial.
-    ...(deps.relay
-      ? {
-          DB_RELAY_LOCAL_PORT: String(DB_RELAY_LOCAL_PORT),
-          DB_EGRESS_RELAY_SOCKS_USERNAME: deps.relay.socksUsername,
-          DB_EGRESS_RELAY_SOCKS_PASSWORD: deps.relay.socksPassword,
-        }
-      : {}),
-  };
+export async function runDbQuery(_deps: DbQueryDeps, _request: DbQueryRequest): Promise<DbQueryResult> {
+  throw new Error(FREE_TIER_CONTAINER_ERROR);
 }
 
 /**
- * Extra wall-clock beyond the export timeout: node start + driver import +
- * connect, PLUS the Parquet footer write and the s3fs flush of the staged
- * file to R2 (which runs after the database deadline — see the runner).
- */
-const EXPORT_EXEC_OVERHEAD_MS = 90_000;
-
-export type DbExportResult =
-  | { ok: true; rowCount: number; bytes: number; durationMs: number }
-  | { ok: false; error: { message: string; code?: string; number?: number; status?: number } };
-
-/**
- * Run one worker-authorized bulk export: the runner streams the read-only
- * result set as a Snappy Parquet file written DIRECTLY into the workspace's
- * mounted warehouse R2 prefix (credential-less bucket mount) — nothing
- * streams through the Worker. Same single stateless exec as runDbQuery, plus
- * the mount ensure. `exportPath` must be `'/' + r2Key` (inside the mounted
- * prefix); `mountPrefix` is the workspace's warehouse prefix. On failure the
- * runner unlinks the partial file — callers should still HEAD-verify the
- * object (warehouse-export parity).
+ * 執行一次已由 Worker 授權的大量匯出：runner 把唯讀結果串流成 Parquet，直接寫進
+ * 工作區掛載的倉儲 R2 前綴，資料完全不經過 Worker。`exportPath` 必須是
+ * `'/' + r2Key`（在掛載的前綴內），`mountPrefix` 是該工作區的倉儲前綴。
  */
 export async function runDbExport(
-  deps: DbQueryDeps,
-  request: DbQueryRequest,
-  mountPrefix: string,
-  exportPath: string,
+  _deps: DbQueryDeps,
+  _request: DbQueryRequest,
+  _mountPrefix: string,
+  _exportPath: string,
 ): Promise<DbExportResult> {
-  // Retry only before the runner is dispatched: an export can run for minutes,
-  // and a second full run is not worth hiding a mid-export failure.
-  const exec = await withTransientRetry(deps, "db_export", false, async (markDispatched) => {
-    await withWedgedSetupRecovery(deps, async () => {
-      await startDbQueryContainer(deps);
-      await ensureRelayPrelude(deps, dbQuerySetupDeadline(deps, "db_export_setup"));
-    });
-    // The mount is an exec-class container call too: unbounded, it hung exports
-    // exactly like the readiness probes did. Its OWN budget, not a share of the
-    // forwarder's — a slow-but-healthy mount must not be cut short by however
-    // long the relay took to come up.
-    await dbQuerySetupDeadline(deps, "db_export_mount")
-      .run(() => deps.container.prepareWarehouseExport(mountPrefix));
-
-    const exportRequest: DbQueryRequest = { ...request, op: "export" };
-    const containerTimeoutMs =
-      (request.timeoutMs ?? DEFAULT_EXPORT_TIMEOUT_MS) + EXPORT_EXEC_OVERHEAD_MS;
-    markDispatched();
-    return await dbQueryDeadline(deps, "db_export", containerTimeoutMs).run(() =>
-      deps.container.runRunner({ ...runnerEnv(deps, exportRequest), DB_EXPORT_PATH: exportPath }, containerTimeoutMs));
-  });
-  const exportTimeoutMs = (request.timeoutMs ?? DEFAULT_EXPORT_TIMEOUT_MS) + EXPORT_EXEC_OVERHEAD_MS;
-  const parsed = parseRunnerOutput(exec, exportTimeoutMs) as unknown as DbExportResult;
-  if (parsed.ok && (typeof parsed.rowCount !== "number" || typeof parsed.bytes !== "number")) {
-    return { ok: false, error: { message: "export runner returned a malformed result", status: 502 } };
-  }
-  if (parsed.ok) {
-    // Sized like the export itself: on self-host this copies the whole file.
-    await dbQueryDeadline(deps, "db_export_publish", exportTimeoutMs)
-      .run(() => deps.container.publishWarehouseExport(mountPrefix, exportPath));
-  }
-  return parsed;
+  throw new Error(FREE_TIER_CONTAINER_ERROR);
 }

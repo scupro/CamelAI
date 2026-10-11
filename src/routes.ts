@@ -57,10 +57,6 @@ export default [
           "routes/_app.settings.organization.team.tsx",
         ),
         route(
-          "settings/organization/billing",
-          "routes/_app.settings.organization.billing.tsx",
-        ),
-        route(
           "settings/organization/workspaces",
           "routes/_app.settings.organization.workspaces.tsx",
         ),
@@ -79,10 +75,6 @@ export default [
         route(
           "settings/organization/models",
           "routes/_app.settings.organization.models.tsx",
-        ),
-        route(
-          'settings/organization/usage',
-          'routes/_app.settings.organization.usage.tsx'
         ),
       ]),
 
@@ -140,16 +132,6 @@ export default [
     "api/marketing-attribution/purchase",
     "routes/api/marketing-attribution.purchase.ts",
   ),
-  route(
-    "api/billing/start-subscription",
-    "routes/api/billing.start-subscription.ts",
-  ),
-  route("api/billing/start-payg", "routes/api/billing.start-payg.ts"),
-  route(
-    "api/billing/chat-credit-status",
-    "routes/api/billing.chat-credit-status.ts",
-  ),
-  route("api/billing/credit-packs", "routes/api/billing.credit-packs.ts"),
   route("api/client-errors", "routes/api/client-errors.ts"),
   route("api/version", "routes/api/version.ts"),
   route("api/help", "routes/api/help.ts"),

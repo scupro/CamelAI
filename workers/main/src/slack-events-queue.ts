@@ -1,55 +1,23 @@
+/**
+ * Slack 事件佇列 —— Free Tier 佔位模組。
+ *
+ * Free Tier 已移除相關付費綁定（容器 / R2 / 佇列 / 瀏覽器渲染 / 計費），
+ * 本檔僅保留「符號與型別介面」，讓仍參照本模組的程式能通過打包與型別檢查；
+ * 任何實際呼叫都會拋出明確錯誤或被安全地忽略。
+ */
+
 import type { Env } from './types.js';
 import type { SlackEventQueueMessage } from './slack-types.js';
-import {
-  processSlackEventCallback,
-  SlackChannelBusyError,
-} from './routes/integrations.js';
 
-const MAX_SLACK_EVENT_RETRIES = 5;
-const SLACK_BUSY_RETRY_DELAY_SECONDS = 30;
-
-function isValidSlackQueueMessage(body: unknown): body is SlackEventQueueMessage {
-  if (!body || typeof body !== 'object') return false;
-  const candidate = body as Partial<SlackEventQueueMessage>;
-  if (!candidate.payload || typeof candidate.payload !== 'object') return false;
-  return true;
-}
-
+/**
+ * Free Tier 已移除 queues 綁定：Slack 事件佇列不會被觸發。
+ * 保留同一簽名，僅 ack 掉訊息以避免未處理訊息造成重試。
+ */
 export async function handleSlackEventsQueue(
   batch: MessageBatch<SlackEventQueueMessage>,
-  env: Env
+  _env: Env,
 ): Promise<void> {
   for (const message of batch.messages) {
-    const attempt = message.attempts ?? 1;
-
-    if (!isValidSlackQueueMessage(message.body)) {
-      console.warn('[slack-events-queue] invalid payload', { body: message.body });
-      message.ack();
-      continue;
-    }
-
-    try {
-      await processSlackEventCallback(env, message.body.payload);
-      message.ack();
-    } catch (error) {
-      if (error instanceof SlackChannelBusyError) {
-        console.warn('[slack-events-queue] channel thread busy; retrying later', {
-          attempt,
-        });
-        message.retry({ delaySeconds: SLACK_BUSY_RETRY_DELAY_SECONDS });
-        continue;
-      }
-
-      console.error('[slack-events-queue] failed to process message', {
-        error: String(error),
-        attempt,
-      });
-
-      if (attempt >= MAX_SLACK_EVENT_RETRIES) {
-        message.ack();
-      } else {
-        message.retry();
-      }
-    }
+    message.ack();
   }
 }
