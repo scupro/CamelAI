@@ -87,34 +87,61 @@
 
 ---
 
-## 🔤 Step 4：設定 Environment Variables（字串配置）
+## 🔤 Step 4：設定 Variables 與 Secrets
 
-**這是字串變數的位置**，跟綁定分開。進入 Workers & Pages → 你的項目 → **Settings → Variables**：
+字串變數與 secret 都放在 **Workers & Pages → 你的項目 → Settings → Variables and secrets**。
+`wrangler.jsonc` 已設 `keep_vars: true`，因此部署不會洗掉你在這裡填的內容。
 
-### 必填（決定項目能否正常工作）
+> 底下每項都是**依目前程式碼實際讀取情形**列出的，不是範例清單。
+> 自查方式：`grep -rn "env\.<名稱>" src workers --include="*.ts"`。
 
-| 變量名 | 說明 | 值示例 |
-|--------|------|--------|
-| `AI_PROVIDER` | 選擇 AI 提供者 | `workers_ai`（預設，用 Cloudflare 內建 AI） 或 `openrouter`（外接） |
+### A. 必填 secret（缺了會直接 throw，核心功能不可用）
 
-### 可選（有預設值，不改也能跑）
+| 變量名 | 用途 | 程式碼證據 |
+|--------|------|-----------|
+| `INTEGRATION_SECRET_KEY` | 加解密 BYOK 與第三方整合憑證 | `workers/main/src/identity/org-do.ts:5145` → `throw new Error("INTEGRATION_SECRET_KEY binding is not configured")`；`workers/main/src/ai-virtual-binding.ts:264` 同樣檢查 |
+| `TOKEN_SIGNING_SECRET` | 簽發／驗證 session token | `src/lib/auth-helpers.ts:30` 型別宣告為必填 `string`；`src/lib/auth-do.ts:201,235,267`、`src/lib/auth.server.ts:184` 直接使用 |
 
-| 變量名 | 預設值 | 說明 |
+**用指令建立**（在本機 repo 目錄執行；`wrangler secret put <key>` 從 stdin 讀值，可直接管線接）：
+
+```bash
+openssl rand -hex 32 | npx wrangler secret put INTEGRATION_SECRET_KEY
+openssl rand -hex 32 | npx wrangler secret put TOKEN_SIGNING_SECRET
+```
+
+> 走 Workers Builds（面板連 GitHub）時，wrangler 用面板登入身分，不需額外設定；
+> 若改走 GitHub Actions + `wrangler-action`，才需要在 repo secrets 放 `CF_ACCOUNT_ID` / `CF_API_TOKEN`。
+
+### B. 必填字串變數
+
+| 變量名 | 值示例 | 說明 |
 |--------|--------|------|
-| `AGENT_MODEL` | `@cf/meta/llama-3.1-8b-instruct-fp8-fast` | Workers AI 使用的模型 |
-| `AI_VIRTUAL_MODEL` | `dynamic/auto` | Workers AI 自動選模型（一般不改） |
-| `LLM_API_KEY` | 空（僅當外接時必填） | 外部 LLM 的 API Key |
-| `LLM_BASE_URL` | `https://api.openrouter.ai/v1` | 外部 LLM 的 Base URL |
-| `LLM_MODEL` | `deepseek/deepseek-chat-v3-0324` | 外部 LLM 使用的模型 |
+| `WORKER_BASE_URL` | `https://camelai.<你的子網域>.workers.dev` | 對外 base URL。程式碼有 fallback（`?? ""`、`\|\| "https://camelai.dev"`）所以**不會 throw**，但填錯會讓 email 連結（`src/lib/email.server.ts:108`）、`agent-mcp` base（`workers/main/src/routes/agent-mcp.ts:262`）、workspace app fetch（`workers/main/src/workspace-app-fetcher.ts:191`）全部指向錯的網域。非機密，用 **Text** 型別填即可 |
 
-### 僅 GitHub Actions + wrangler-action 需要（面板直連時可留空）
+```bash
+printf 'https://camelai.<你的子網域>.workers.dev' | npx wrangler secret put WORKER_BASE_URL
+```
 
-| 變量名 | 說明 |
-|--------|------|
-| `CF_ACCOUNT_ID` | Cloudflare 賬號 ID |
-| `CF_API_TOKEN` | Cloudflare API Token |
+### C. 選填（只在啟用該功能時才需要）
 
----
+| 變量名 | 何時需要 |
+|--------|---------|
+| `CF_ACCOUNT_ID`、`CF_API_TOKEN`、`CF_ZONE_ID` | 用到「刪除已部署 app」「cf-api-proxy」等需打 Cloudflare API 的功能。缺值時 `src/lib/deployed-app-delete.server.ts:116` → `throw "Server configuration error: Missing Cloudflare credentials"` |
+| `CF_GATEWAY_NAME`、`CF_GATEWAY_TOKEN`、`AI_GATEWAY_AUTH_TOKEN` | 流量走 AI Gateway 時 |
+| `NOTION_CLIENT_ID`、`NOTION_CLIENT_SECRET` | Notion 整合 |
+| `SLACK_CLIENT_ID`、`DISCORD_CLIENT_ID` | Slack / Discord 整合 |
+| `AGENT_RUNTIME_API_TOKEN` | agent runtime 對外 API 驗證 |
+| `SELFHOST_AI_PROVIDER`、`SELFHOST_AI_API_KEY`、`SELFHOST_AI_BASE_URL`、`SELFHOST_AI_MODEL`、`SELFHOST_AI_NAME`、`SELFHOST_AI_AUTH_TYPE`、`SELFHOST_AI_API`、`SELFHOST_AI_AWS_REGION` | **外接 AI 提供者（openai / anthropic / openrouter / bedrock / custom）走這一組**，型別定義在 `src/lib/selfhost-ai-provider.ts:11-22`。`SELFHOST_AI_PROVIDER` 必填，且只能是 `anthropic`、`bedrock`、`custom`、`openai`、`openrouter` 之一；只填其他 `SELFHOST_AI_*` 卻漏填它，程式會回 `"SELFHOST_AI_PROVIDER is required when SELFHOST_AI_* variables are set."`。`SELFHOST_AI_API_KEY` 請用 **Secret** 型別。注意名稱是 `SELFHOST_AI_PROVIDER`，**不是** `AI_PROVIDER` |
+| `LOCAL_AUTH_BYPASS`、`LOCAL_AUTH_BYPASS_HOSTS` | 僅本機開發跳過登入；程式碼另外要求請求必須來自 localhost（`src/lib/auth.server.ts:298-310`）。**生產環境不要設** |
+
+### D. 舊版 README 列過、但程式碼其實沒讀的變數（設了沒作用）
+
+`AI_PROVIDER`、`AGENT_MODEL`、`AI_VIRTUAL_MODEL`、`LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`
+
+這些是早期玩具版的殘留。實測命中數：`AGENT_MODEL` / `AI_VIRTUAL_MODEL` / `LLM_API_KEY` / `LLM_BASE_URL` 皆 **0 次**；
+`AI_PROVIDER` 的 16 次命中全是常數與 `SELFHOST_AI_PROVIDER`，`LLM_MODEL` 的 82 次命中全是
+`CAMEL_CODE_LLM_MODEL` / `LLM_MODEL_OPTIONS` 這類程式內常數，都不是環境變數讀取。
+
 
 ## 🚀 Step 5：首次部署
 
@@ -179,8 +206,16 @@ CamelAI/
 **Q: 面板創建的 D1/KV 是雲端數據嗎？以後想改用本地 `wrangler` 怎麼辦？**  
 **A**: 是真實雲端數據，與本地無關。若改用本地 `wrangler`，可 `npx wrangler d1 clone camelai-db ./local-db` 克隆到本地，但個人 Free Tier 用面板操作即可，無需額外設置。
 
-**Q: 想外接 OpenAI 怎麼辦？**  
-**A**: 在 Variables 裡填 `LLM_API_KEY`、`LLM_BASE_URL`，並將 `AI_PROVIDER` 設為 `openrouter`，程式碼自動切換到外接模式。
+**Q: 想外接 OpenAI / Anthropic / OpenRouter 怎麼辦？**  
+**A**: 用 `SELFHOST_AI_*` 這一組，**不是** `LLM_API_KEY` / `AI_PROVIDER`——後者程式碼根本沒讀（見 Step 4 的 D 段）。以外接 OpenAI 為例：
+
+```bash
+printf 'openai'        | npx wrangler secret put SELFHOST_AI_PROVIDER
+printf 'sk-你的金鑰'    | npx wrangler secret put SELFHOST_AI_API_KEY
+printf 'gpt-4o-mini'   | npx wrangler secret put SELFHOST_AI_MODEL
+```
+
+`SELFHOST_AI_PROVIDER` 可填 `anthropic`、`bedrock`、`custom`、`openai`、`openrouter`；走 `custom` / `openrouter` 時另填 `SELFHOST_AI_BASE_URL`。完整驗證邏輯見 `src/lib/selfhost-ai-provider.ts`。
 
 ---
 

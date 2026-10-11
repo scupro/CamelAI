@@ -12,7 +12,7 @@
   ],
   "vars": {},
   // 面板「Variables and secrets」的字串變數與 secrets 不會被每次部署覆蓋
-  // （wrangler 預設會以本檔 vars 覆寫面板設定，见官方 docs「Source of truth」）
+  // （wrangler 預設會以本檔 vars 覆寫面板設定，見官方 docs「Source of truth」）
   "keep_vars": true,
   "ai": {
     "binding": "AI",
