@@ -11,23 +11,25 @@
     { "type": "Text", "globs": ["**/*.md"], "fallthrough": true }
   ],
   "vars": {},
+  // 面板「Variables and secrets」的字串變數與 secrets 不會被每次部署覆蓋
+  // （wrangler 預設會以本檔 vars 覆寫面板設定，见官方 docs「Source of truth」）
+  "keep_vars": true,
   "ai": {
     "binding": "AI",
     "remote": true
   },
-  // ⚠️ 以下 id / database_id 必須換成「你自己 account」實際建立的資源 ID，
-  //    否則 `wrangler deploy` 會報 KV namespace not found（10041）／D1 not found。
-  //    建立指令見 README「步驟 1：建立雲資源並取得 ID」。
+  // KV / D1 只宣告 binding 名稱、**不寫 resource id**（Automatic provisioning）：
+  // 部署時 wrangler 自動建立資源；透過 GitHub／面板部署時實際 id 只存在面板
+  // Settings → Bindings，不會寫回這份檔案，因此 repo 內不保留任何 id。
   "kv_namespaces": [
-    { "binding": "SESSIONS", "id": "REPLACE_WITH_YOUR_SESSIONS_KV_ID" },
-    { "binding": "APP_KV", "id": "REPLACE_WITH_YOUR_APP_KV_ID" },
-    { "binding": "EMAIL_TO_USER", "id": "REPLACE_WITH_YOUR_EMAIL_TO_USER_KV_ID" }
+    { "binding": "SESSIONS" },
+    { "binding": "APP_KV" },
+    { "binding": "EMAIL_TO_USER" }
   ],
   "d1_databases": [
     {
       "binding": "APP_DB",
       "database_name": "camelai-db",
-      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
       "migrations_dir": "migrations"
     }
   ],

@@ -2,7 +2,7 @@
 
 **個人用途的 AI Coding Assistant**，基於 [qaml-ai/camelAI](https://github.com/qaml-ai/camelAI) 修改而成，針對 Cloudflare Workers Free 層精簡：移除 R2、Sandbox 容器、Billing 及複雜功能，保留核心 AI 代理與 Durable Objects 架構。
 
-**部署方式**：透過 **Cloudflare 面板連接 GitHub** 部署（Workers Builds）。**KV / D1 的綁定寫在 `wrangler.jsonc`**（每次部署由 `npx wrangler deploy` 套用的是檔案內容，不是在面板 Settings 裡手工綁的資源，面板綁定會被部署覆寫），因此要先建立資源並把 ID 填入 `wrangler.jsonc`（見下方步驟 1）；配置**字串**則放在面板 **Variables**，兩者位置不同、機制不同。
+**部署方式**：透過 **Cloudflare 面板連接 GitHub** 部署（Workers Builds）。KV／D1 在 `wrangler.jsonc` 只宣告 **binding 名稱**，部署時自動建立資源，綁定與 id 都呈現在面板 **Settings → Bindings**（repo 內不留任何 id）；配置**字串**與 secret 則放在 **Variables and secrets**，兩者位置不同、機制不同。
 
 ---
 
@@ -34,30 +34,24 @@
 
 以下步驟將 GitHub 倉庫與 Cloudflare Workers 綁定並一鍵部署。
 
-### 步驟 1：建立雲資源並取得 ID
+### 步驟 1：KV / D1 綁定（不需填 ID，也不要把 ID 寫進程式碼）
 
-`wrangler.jsonc` 已宣告 KV 與 D1 綁定，但**每個 account 的資源 ID 不同**，必須先建立資源再把 ID 填回 `wrangler.jsonc`。若沿用示例 ID，部署會失敗並顯示 `KV namespace '<id>' not found [code: 10041]`。
+`wrangler.jsonc` 只宣告 **binding 名稱**，不寫任何 resource id：
 
-```bash
-npx wrangler login                       # 瀏覽器授權，只需一次
-npx wrangler kv namespace create SESSIONS
-npx wrangler kv namespace create APP_KV
-npx wrangler kv namespace create EMAIL_TO_USER
-npx wrangler d1 create camelai-db
+```jsonc
+"kv_namespaces": [{ "binding": "SESSIONS" }, { "binding": "APP_KV" }, { "binding": "EMAIL_TO_USER" }],
+"d1_databases":  [{ "binding": "APP_DB", "database_name": "camelai-db", "migrations_dir": "migrations" }]
 ```
 
-每條指令會回傳一段 JSON（例如 `{ "id": "35f55b8a...", "preview_id": "..." }`）：
+首次部署時 Wrangler 會**自動建立**這些 KV namespace 與 D1 資料庫（Automatic provisioning），並把它們列在項目的 **Settings → Bindings**（KV Namespace / D1 Database 區塊）——這才是綁定該待的地方。透過 GitHub／面板觸發的部署，資源 id 只會保留在面板，**不會寫回 repo**，所以程式庫裡看不到任何明文 id。
 
-| 回傳欄位 | 填到 `wrangler.jsonc` 的哪裡 |
-|----------|------------------------------|
-| KV 的 `id` | 對應 `kv_namespaces[].id`（取代 `REPLACE_WITH_YOUR_*` 佔位字串） |
-| D1 的 `database_id` | `d1_databases[0].database_id` |
+> 若你想自己先在面板建好資源（Workers & Pages → Storage & Databases → KV / D1），只要名稱對得上即可；綁定仍舊顯示在 Settings → Bindings，不需要修改 repo 檔案。
 
-建好後套用資料表 schema（只需執行一次）：
+另外已設定 `"keep_vars": true`，因此在面板 **Variables and secrets** 填的字串變數與 secret **不會**被後續部署覆蓋。
 
-```bash
-npx wrangler d1 migrations apply camelai-db --remote
-```
+部署成功後，D1 是空的，需要套用一次資料表結構（二擇一）：
+- 面板：D1 資料庫 → **Console**，依序貼上 `migrations/0001_app_index.sql` ～ `0004_*.sql` 的內容並執行（DDL 為 `CREATE TABLE IF NOT EXISTS`，可重複執行）
+- 本地：`npx wrangler login` 後執行 `npx wrangler d1 migrations apply camelai-db --remote`
 
 ### 步驟 2：連接 Cloudflare 面板
 
@@ -71,9 +65,9 @@ npx wrangler d1 migrations apply camelai-db --remote
 
 ---
 
-## 🔌 Step 3：綁定對照表（由 `wrangler.jsonc` 宣告）
+## 🔌 Step 3：綁定對照表（綁定顯示在面板 Settings → Bindings）
 
-下列綁定**已在 `wrangler.jsonc` 宣告**，你只需把步驟 1 取得的資源 ID 填進去即可；**不需要**在面板 `Settings → Bindings` 手工綁（用 Workers Builds 部署時，面板的手工綁定會在每次部署被設定檔覆寫）。若想改用面板建立資源，可在 **Workers & Pages → Storage** 裡創建 KV／D1，再把產生的 ID 填回 `wrangler.jsonc`。
+`wrangler.jsonc` 只宣告 binding **名稱**（不含 id），部署時由 Wrangler 自動建立並綁定資源；完成後到項目的 **Settings → Bindings** 就能看到下列條目，右側會顯示它所指向的 KV／D1 實例與 id（id 只存在面板，不進 repo）。
 
 | 綁定名稱 | 類型 | 說明 | 程式碼中訪問方式 |
 |----------|------|------|------------------|
@@ -82,11 +76,12 @@ npx wrangler d1 migrations apply camelai-db --remote
 | `EMAIL_TO_USER` | KV Store | 儲存用戶 email → user_id 映射 | `env.EMAIL_TO_USER`（KVNamespace 實例） |
 | `APP_DB` | D1 Database | 關係數據庫，存放 users / orgs / threads 等核心表 | `env.APP_DB`（D1Database 實例） |
 | `AI` | AI | Cloudflare Workers AI（自動注入，不需要手動綁） | `env.AI`（AI 對象） |
+| `CHAT_THREAD`、`USER`、`ORG`… | Durable Object | 11 個 DO 類別，同屬本 Worker | `env.CHAT_THREAD`（DurableObjectNamespace） |
 
-**操作方式**（本次部署失敗的教訓）：
-- 面板 `Settings → Bindings` 建的綁定**不會保留**：Workers Builds 每次都會執行 `npx wrangler deploy`，以 `wrangler.jsonc` 的內容覆蓋 Worker 設定，綁定以設定檔為準。
-- 正確順序：先在面板或用 `npx wrangler kv namespace create` / `npx wrangler d1 create camelai-db` **建立資源**，取得 ID 後填入 `wrangler.jsonc` 的 `kv_namespaces[].id` 與 `d1_databases[].database_id`（取代 `REPLACE_WITH_YOUR_*` 佔位字串），再 push 觸發部署。
-- 若 ID 仍是佔位值或指向不存在於此 account 的資源，部署會失敗並顯示 `KV namespace '<id>' not found ... [code: 10041]`。
+**注意**：
+- 綁定**不需要**在 repo 內填 id；把 id 寫死在設定檔會讓同一份程式碼無法在其他 account 部署，也沒有必要。
+- 只有當你把某資源的 id 明確寫進 `wrangler.jsonc` 時，部署才会去綁定那個既定資源（此時若 id 不存在便會報 `KV namespace '<id>' not found [code: 10041]`）。本專案刻意不這麼做。
+- 字串配置與 secret 放在 **Variables and secrets**（Step 4），且已設 `keep_vars: true`，部署不會把面板上填的內容洗掉。
 
 > **綁定成功後**，程式碼裡拿到的是**已連接好的資源實例**，不是字串。例如 `await env.SESSIONS.put(...)` 直接調用 KV 的 put 方法，`await env.APP_DB.prepare(...)` 直接執行 SQL。
 
