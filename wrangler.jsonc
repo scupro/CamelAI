@@ -15,16 +15,19 @@
     "binding": "AI",
     "remote": true
   },
+  // ⚠️ 以下 id / database_id 必須換成「你自己 account」實際建立的資源 ID，
+  //    否則 `wrangler deploy` 會報 KV namespace not found（10041）／D1 not found。
+  //    建立指令見 README「步驟 1：建立雲資源並取得 ID」。
   "kv_namespaces": [
-    { "binding": "SESSIONS", "id": "f5ab08fdb1d7404fbc45a171217b4a27" },
-    { "binding": "APP_KV", "id": "e894eb2caf1641ad8870da994b992fce" },
-    { "binding": "EMAIL_TO_USER", "id": "ab267c4f44b847dda8bdca400a4e1884" }
+    { "binding": "SESSIONS", "id": "REPLACE_WITH_YOUR_SESSIONS_KV_ID" },
+    { "binding": "APP_KV", "id": "REPLACE_WITH_YOUR_APP_KV_ID" },
+    { "binding": "EMAIL_TO_USER", "id": "REPLACE_WITH_YOUR_EMAIL_TO_USER_KV_ID" }
   ],
   "d1_databases": [
     {
       "binding": "APP_DB",
       "database_name": "camelai-db",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
       "migrations_dir": "migrations"
     }
   ],
