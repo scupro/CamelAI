@@ -49,8 +49,29 @@ const RETIRED_PI_MODEL_IDS: Readonly<Record<string, string>> = {
   "gemini-3.5-flash": "gemini-3.8-flash",
   "gemini-3-flash-preview": "gemini-3.8-flash",
   "gemini-3.1-pro-preview": "gemini-3.8-flash",
-  "deepseek-v4-pro": "deepseek-v4.1-flash",
-  "deepseek-v4-flash": "deepseek-v4.1-flash",
+  "deepseek-v4-pro": "ling-flash",
+  "deepseek-v4-flash": "ling-flash",
+  // 2026-10 全面改用免費模型時退役的 slug（與 llm-provider-config.ts 的
+  // STORED_LLM_MODEL_REPLACEMENTS 保持一致）
+  sonnet: "nemotron-ultra",
+  "haiku-5.5": "lfm-mini",
+  "fable-5.1": "nemotron-ultra",
+  "opus-5.5": "nemotron-ultra",
+  "gpt-6.1-sol": "gpt-oss-120b",
+  "gpt-6-luna": "gpt-oss-20b",
+  "gpt-5.6-terra-bedrock": "gpt-oss-120b",
+  "kimi-k3": "north-mini-code",
+  "grok-4.7": "nemotron-ultra",
+  "glm-5.3": "ling-flash",
+  "glm-5.3-flash": "lfm-mini",
+  "gemini-3.8-flash": "gemma-4-31b",
+  "deepseek-v4-auto": "north-mini-code",
+  "deepseek-v4.1-flash": "ling-flash",
+  // Claude 真實 ID（Anthropic 無免費方案）
+  "claude-sonnet-5-5": "nemotron-ultra",
+  "claude-opus-5-5": "nemotron-ultra",
+  "claude-haiku-5-5": "lfm-mini",
+  "claude-fable-5-1": "nemotron-ultra",
 };
 
 export class PiModelMapping {
@@ -78,55 +99,54 @@ export class PiModelMapping {
       hostedGatewayProvider: "openrouter",
       hostedModelId: this.openRouterNitroModel(`openai/${resolvedModelId}`),
     });
+    // Groq / Cohere 走 OpenAI 相容端點，其真實模型 ID 本身就可能含 "/"
+    // （如 Groq 的 openai/gpt-oss-120b），因此不能用 openAiReference——
+    // 它會再加一層 "openai/" 前綴。自架部署走 BYOK 路徑，hostedModelId 用不到。
+    const openAiCompatibleReference = (
+      resolvedModelId: string,
+    ): PiResolvedModelReference => ({
+      provider: "openai",
+      modelId: resolvedModelId,
+      hostedGatewayProvider: "openrouter",
+      hostedModelId: resolvedModelId,
+    });
     switch (normalizedModelId) {
-      case "opus-5.5":
-        return claudeReference("claude-opus-5-5");
-      case "fable-5.1":
-        return claudeReference("claude-fable-5-1");
-      case "sonnet":
-        return claudeReference("claude-sonnet-5-5");
-      case "haiku-5.5":
-        return claudeReference("claude-haiku-5-5");
-      case "gpt-6.1-sol":
-      case "gpt-6-luna":
-        return openAiReference(normalizedModelId);
-      case "gpt-5.6-terra-bedrock":
-        return openAiReference("gpt-5.6-terra");
+      // --- OpenRouter 免費模型（pricing 全 0，:free 端點）---
+      case "nemotron-ultra":
+        return openRouterReference("nvidia/nemotron-3-ultra-550b-a55b:free");
+      case "nemotron-lightning":
+        return openRouterReference("nvidia/nemotron-3.5-lightning:free");
+      case "inkling":
+        return openRouterReference("thinkingmachines/inkling:free");
+      case "gemma-4-31b":
+        return openRouterReference("google/gemma-4-31b-it:free");
+      case "north-mini-code":
+        return openRouterReference("cohere/north-mini-code:free");
+      case "laguna-s":
+        return openRouterReference("poolside/laguna-s-2.1:free");
+      case "ling-flash":
+        // 此模型 pricing 為 0 但無 :free 後綴
+        return openRouterReference("inclusionai/ling-3.1-flash");
+      case "lfm-mini":
+        return openRouterReference("liquid/lfm-2.5-2.6b:free");
+      case "openrouter-auto":
+        return openRouterReference("openrouter/free");
+      // --- Groq 免費方案：base_url = https://api.groq.com/openai/v1 ---
+      case "gpt-oss-120b":
+        return openAiCompatibleReference("openai/gpt-oss-120b");
+      case "gpt-oss-20b":
+        return openAiCompatibleReference("openai/gpt-oss-20b");
+      case "qwen3-27b":
+        return openAiCompatibleReference("qwen/qwen3.8-27b");
+      // --- Cohere 試用金鑰：base_url = https://api.cohere.ai/compatibility/v1 ---
+      case "command-a":
+        return openAiCompatibleReference("command-a-03-2025");
+      case "command-r7b":
+        return openAiCompatibleReference("command-r7b-12-2024");
       case "custom":
         return openAiReference(DEFAULT_OPENAI_MODEL);
-      case "kimi-k3":
-        return openRouterReference("moonshotai/kimi-k3");
-      case "grok-4.7":
-        return openRouterResponsesReference("x-ai/grok-4.7");
-      case "glm-5.3":
-        return openRouterReference("z-ai/glm-5.3");
-      case "glm-5.3-flash":
-        return openRouterReference("z-ai/glm-5.3-flash");
-      case "gemini-3.8-flash":
-        return openRouterReference("google/gemini-3.8-flash");
-      case "deepseek-v4.1-flash":
-        return openRouterReference("deepseek/deepseek-v4.1-flash");
-      case "deepseek-v4-auto":
-        // Keep the persisted/public camelCode id stable while its hosted
-        // backend uses the existing Luna-over-OpenRouter route. This lets old
-        // threads and free-mode fallbacks move off the self-hosted DeepSeek
-        // pool without a thread-model migration.
-        //
-        // Hosted traffic goes through an AI Gateway dynamic route so the
-        // gateway falls back to Muse Spark when Luna's endpoints are rate
-        // limited. Every available Luna endpoint in a region can be the same
-        // provider, so a model-level fallback is the only reliable escape.
-        // Dynamic routes are reachable only through the gateway's
-        // /compat/chat/completions endpoint, so this tier uses the completions
-        // shape like the other two hosted fallback routes.
-        return {
-          ...openAiReference("gpt-5.6-luna"),
-          byokAllowed: false,
-          api: "openai-completions",
-          hostedGatewayProvider: "compat",
-          hostedModelId: "dynamic/luna-muse-fallback",
-        };
       default:
+        // 含 "/" 的視為使用者自填的完整供應商模型 ID，直接交給 OpenRouter。
         if (normalizedModelId.includes("/")) {
           return openRouterReference(normalizedModelId);
         }

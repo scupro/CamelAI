@@ -554,22 +554,36 @@ export interface WorkerScriptWithCreator extends WorkerScript {
 
 // LLM Provider BYOK types
 export type LlmProvider = "anthropic" | "bedrock" | "custom" | "openai" | "openrouter";
+/**
+ * Free Tier 模型清單：全部為供應商目前實際提供的**免費**模型。
+ *
+ * 這裡放的是短而穩定的 slug；對應到供應商真實模型 ID 的對映在
+ * `workers/main/src/pi-model-resolution.ts` 的 `resolvePiModelReference()`。
+ * 舊的 camelAI 託管模型 slug 已退役，透過 `RETIRED_PI_MODEL_IDS` 與
+ * `STORED_LLM_MODEL_REPLACEMENTS` 轉譯，既有對話不會拿到無效模型。
+ *
+ * 清單查證日期 2026-10-11，來源與速率限制見 docs/free-models.md。
+ */
 export type LlmModel =
-  | "sonnet"
-  | "haiku-5.5"
-  | "fable-5.1"
-  | "opus-5.5"
-  | "gpt-6.1-sol"
-  | "gpt-6-luna"
-  | "gpt-5.6-terra-bedrock"
-  | "custom"
-  | "kimi-k3"
-  | "grok-4.7"
-  | "glm-5.3"
-  | "glm-5.3-flash"
-  | "gemini-3.8-flash"
-  | "deepseek-v4-auto"
-  | "deepseek-v4.1-flash";
+  // OpenRouter 免費模型（provider = openrouter）
+  | "nemotron-ultra"
+  | "nemotron-lightning"
+  | "inkling"
+  | "gemma-4-31b"
+  | "north-mini-code"
+  | "laguna-s"
+  | "ling-flash"
+  | "lfm-mini"
+  | "openrouter-auto"
+  // Groq 免費方案（OpenAI 相容，provider = openai）
+  | "gpt-oss-120b"
+  | "gpt-oss-20b"
+  | "qwen3-27b"
+  // Cohere 免費試用金鑰（OpenAI 相容端點，provider = openai）
+  | "command-a"
+  | "command-r7b"
+  // 自訂供應商的任意模型 ID
+  | "custom";
 
 export interface ModelPickerModelConfig {
   id: LlmModel;

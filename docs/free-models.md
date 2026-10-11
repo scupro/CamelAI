@@ -152,7 +152,28 @@ printf 'openai/gpt-oss-120b'                 | npx wrangler secret put SELFHOST_
 
 ---
 
-## 5. 待辦：把選擇器換成真實免費模型
+## 5. 已完成：選擇器全面替換為真實免費模型（2026-10-11）
+
+`LlmModel` 已從 15 個 camelAI 託管／Anthropic／OpenAI／Bedrock 付費模型，全面替換為
+上述三家的 **15 個免費模型 slug**（9 個 OpenRouter + 3 個 Groq + 2 個 Cohere + `custom`）。
+
+| 檔案 | 變更 |
+|------|------|
+| `src/types.ts` | `LlmModel` 聯集改為 15 個免費 slug |
+| `src/lib/llm-provider-config.ts` | 選項清單改寫；新增 `OPENROUTER_LLM_MODEL_OPTIONS`；`ANTHROPIC_LLM_MODEL_OPTIONS` 清空（無免費模型）；四個 `DEFAULT_*` 改指免費模型；`STORED_LLM_MODEL_REPLACEMENTS` 補齊 50+ 個退役 ID 轉譯；移除 `getDefaultLlmModel` 的 bedrock 分支 |
+| `src/lib/model-catalog.ts` | `MODEL_CATALOG` 與 `LLM_MODEL_TO_PRICING_KEY`（皆為窮舉 `Record<LlmModel,…>`）重寫；`cost` 一律 `"Free"`；`ProviderLogoType` 加入 `openrouter` |
+| `src/lib/usage-pricing.ts` | 補 33 個 $0 計價鍵；**修正 fallback**：原本未知模型會落到 `claude-sonnet-5-5`，把免費模型顯示成昂貴 Sonnet 費用，現改為 `free-tier-fallback`（$0） |
+| `workers/main/src/pi-model-resolution.ts` | `resolvePiModelReference()` 的 switch 改寫為 15 個免費模型的真實供應商 ID；新增 `openAiCompatibleReference`（Groq/Cohere 的 ID 本身含 `/`，用 `openAiReference` 會重複加 `openai/` 前綴）；`RETIRED_PI_MODEL_IDS` 補退役 slug |
+| `workers/main/src/ai-virtual-binding.ts` | `TIER_MODELS` 四個 tier 改指免費模型；`VIRTUAL_AI_ROUTES` 補 14 個新 slug 對映 |
+| `workers/main/src/routes/admin/schemas.ts` | `LlmModelSchema` zod enum 同步 |
+| `workers/main/src/identity/org-do.ts` | `LEGACY_THREAD_MODEL` 由 `sonnet` 改為 `nemotron-ultra` |
+| `workers/main/src/chat-thread/pi-model-config.ts` | thinking level 判斷由 `gpt-6-luna` 改為 `nemotron-ultra` |
+
+`CAMEL_CODE_LLM_MODEL`（產品名「camelCode」）沿用，但底層由 camelAI 託管的
+`deepseek-v4-auto` 改為 OpenRouter 免費的 `cohere/north-mini-code:free`——這一次改動
+同時解掉了 13 處 `=== CAMEL_CODE_LLM_MODEL` 的型別比較錯誤。
+
+### 替換範圍的原始評估（保留供參考）
 
 模型選擇器的內容與**解析／計費邏輯綁在一起**，不能只改 picker。受影響檔案（依引用數）：
 
@@ -167,7 +188,7 @@ printf 'openai/gpt-oss-120b'                 | npx wrangler secret put SELFHOST_
 | `src/types.ts` | 8 | `LlmModel` 型別聯合 |
 | `org-do.ts` / `d1-mirror-reconcile.ts` / `pi-model-config.ts` | 各 1 | 零散引用 |
 
-替換時必須同步處理：
+上述項目均已處理，另外還同步了：
 
 - `LlmModel` 型別聯合（`src/types.ts:557-572`）
 - `STORED_LLM_MODEL_REPLACEMENTS`（`llm-provider-config.ts:20`）——**已存在 DB 的舊模型 ID 要靠這張表轉譯**，否則既有對話會拿到無效模型

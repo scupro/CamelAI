@@ -281,7 +281,9 @@ function clampRetryAtMs(retryAtMs: number, nowMs: number): number {
 
 // Threads from before the model column ran on Sonnet, the default then. The
 // column backfill keeps that model rather than whatever the default is now.
-const LEGACY_THREAD_MODEL: LlmModel = "sonnet";
+// Sonnet 已隨 2026-10 全面改用免費模型而退役，其替代見
+// llm-provider-config.ts 的 STORED_LLM_MODEL_REPLACEMENTS（sonnet → nemotron-ultra）。
+const LEGACY_THREAD_MODEL: LlmModel = "nemotron-ultra";
 
 function normalizeThreadModelForStorage(
   model: LlmModel | string | undefined,

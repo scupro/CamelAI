@@ -160,22 +160,27 @@ export const UpdateUserCreditsBodySchema = z.object({
   billing_credit_usage_started_at: z.number().int().min(0).nullable().optional(),
 });
 
+// 必須與 src/types.ts 的 LlmModel 聯集同步（皆為供應商實際提供的免費模型，
+// 查證日期 2026-10-11，見 docs/free-models.md）。
 export const LlmModelSchema = z.enum([
-  "sonnet",
-  "haiku-5.5",
-  "opus-5.5",
-  "fable-5.1",
-  "gpt-6.1-sol",
-  "gpt-6-luna",
-  "gpt-5.6-terra-bedrock",
+  // OpenRouter 免費
+  "nemotron-ultra",
+  "nemotron-lightning",
+  "inkling",
+  "gemma-4-31b",
+  "north-mini-code",
+  "laguna-s",
+  "ling-flash",
+  "lfm-mini",
+  "openrouter-auto",
+  // Groq 免費方案（OpenAI 相容）
+  "gpt-oss-120b",
+  "gpt-oss-20b",
+  "qwen3-27b",
+  // Cohere 試用金鑰（OpenAI 相容端點）
+  "command-a",
+  "command-r7b",
   "custom",
-  "kimi-k3",
-  "grok-4.7",
-  "glm-5.3",
-  "glm-5.3-flash",
-  "gemini-3.8-flash",
-  "deepseek-v4-auto",
-  "deepseek-v4.1-flash",
 ]);
 
 export const UpdateThreadBodySchema = z.object({

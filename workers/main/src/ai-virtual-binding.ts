@@ -51,30 +51,34 @@ export type GatewayProvider = "compat" | "openrouter";
 
 const TIERS: ReadonlySet<TierName> = new Set(["cheap", "fast", "auto", "smart"]);
 
+// Free Tier 模型對應（查證日期 2026-10-11，見 docs/free-models.md）。
+// 注意：Anthropic / Bedrock 沒有免費模型，那兩條路徑在此指向 OpenRouter 的
+// 免費模型；`openai` 這條路徑對應的是 Groq / Cohere 的 OpenAI 相容端點，
+// 實際 base_url 由 SELFHOST_AI_BASE_URL 決定。
 const TIER_MODELS: Readonly<Record<ProviderKind, Readonly<Record<TierName, string>>>> = {
   openai: {
-    cheap: "gpt-6-luna",
-    fast: "gpt-6-luna",
-    auto: "gpt-6-luna",
-    smart: "gpt-6.1-sol",
+    cheap: "openai/gpt-oss-20b",
+    fast: "openai/gpt-oss-20b",
+    auto: "openai/gpt-oss-120b",
+    smart: "openai/gpt-oss-120b",
   },
   anthropic: {
-    cheap: "claude-sonnet-5-5",
-    fast: "claude-sonnet-5-5",
-    auto: "claude-sonnet-5-5",
-    smart: "claude-opus-5-5",
+    cheap: "liquid/lfm-2.5-2.6b:free",
+    fast: "inclusionai/ling-3.1-flash",
+    auto: "nvidia/nemotron-3-ultra-550b-a55b:free",
+    smart: "nvidia/nemotron-3-ultra-550b-a55b:free",
   },
   bedrock: {
-    cheap: "anthropic.claude-sonnet-5-5",
-    fast: "anthropic.claude-sonnet-5-5",
-    auto: "anthropic.claude-sonnet-5-5",
-    smart: "anthropic.claude-opus-5-5",
+    cheap: "liquid/lfm-2.5-2.6b:free",
+    fast: "inclusionai/ling-3.1-flash",
+    auto: "nvidia/nemotron-3-ultra-550b-a55b:free",
+    smart: "nvidia/nemotron-3-ultra-550b-a55b:free",
   },
   openrouter: {
-    cheap: "openai/gpt-6-luna",
-    fast: "openai/gpt-6-luna",
-    auto: "openai/gpt-6-luna",
-    smart: "anthropic/claude-sonnet-5.5",
+    cheap: "liquid/lfm-2.5-2.6b:free",
+    fast: "nvidia/nemotron-3.5-lightning:free",
+    auto: "openrouter/free",
+    smart: "nvidia/nemotron-3-ultra-550b-a55b:free",
   },
 };
 
@@ -129,6 +133,24 @@ const LEGACY_MODEL_ALIASES: Readonly<Record<string, string>> = {
   "gemini-3.1-pro-preview": "google/gemini-3.8-flash",
   "gemini-3.8-flash": "google/gemini-3.8-flash",
   "deepseek-v4.1-flash": "deepseek/deepseek-v4.1-flash",
+  // --- Free Tier 免費模型（查證 2026-10-11，見 docs/free-models.md）---
+  // OpenRouter :free 端點
+  "nemotron-ultra": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "nemotron-lightning": "nvidia/nemotron-3.5-lightning:free",
+  inkling: "thinkingmachines/inkling:free",
+  "gemma-4-31b": "google/gemma-4-31b-it:free",
+  "north-mini-code": "cohere/north-mini-code:free",
+  "laguna-s": "poolside/laguna-s-2.1:free",
+  "ling-flash": "inclusionai/ling-3.1-flash",
+  "lfm-mini": "liquid/lfm-2.5-2.6b:free",
+  "openrouter-auto": "openrouter/free",
+  // Groq 免費方案（OpenAI 相容端點）
+  "gpt-oss-120b": "openai/gpt-oss-120b",
+  "gpt-oss-20b": "openai/gpt-oss-20b",
+  "qwen3-27b": "qwen/qwen3.8-27b",
+  // Cohere 試用金鑰（OpenAI 相容端點）
+  "command-a": "command-a-03-2025",
+  "command-r7b": "command-r7b-12-2024",
 };
 
 const DEEPSEEK_V4_VIRTUAL_AI_ROUTES: Readonly<

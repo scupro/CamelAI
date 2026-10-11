@@ -29,7 +29,10 @@ export type ProviderLogoType =
   | "grok"
   | "glm"
   | "gemini"
-  | "deepseek";
+  | "deepseek"
+  // 免費模型清單新增：OpenRouter 是所有 :free 模型的實際提供管道，
+  // 且 integration-logo-registry 已註冊 "openrouter" 圖示。
+  | "openrouter";
 export type CostBucket = "Free" | "$" | "$$" | "$$$" | "$$$$" | "$$$$$";
 export const COST_BUCKET_MAX = 5;
 // Half-step rating, 0.5 through 5.0. Used for both intelligence and speed.
@@ -57,184 +60,178 @@ export interface ModelCatalogEntry {
   speed: RatingScore;
 }
 
+/** slug → usage-pricing.ts 的計價鍵（即供應商真實模型 ID）。全部免費。 */
 export const LLM_MODEL_TO_PRICING_KEY: Readonly<Record<LlmModel, string>> = {
-  "opus-5.5": "claude-opus-5-5",
-  "fable-5.1": "claude-fable-5-1",
-  sonnet: "claude-sonnet-5-5",
-  "haiku-5.5": "claude-haiku-5-5",
-  "gpt-6.1-sol": "gpt-6.1-sol",
-  "gpt-6-luna": "gpt-6-luna",
-  "gpt-5.6-terra-bedrock": "gpt-5.6-terra",
-  custom: "custom",
-  "kimi-k3": "moonshotai/kimi-k3",
-  "grok-4.7": "x-ai/grok-4.7",
-  "glm-5.3": "z-ai/glm-5.3",
-  "glm-5.3-flash": "z-ai/glm-5.3-flash",
-  "gemini-3.8-flash": "google/gemini-3.8-flash",
-  "deepseek-v4-auto": "deepseek-v4-auto",
-  "deepseek-v4.1-flash": "deepseek/deepseek-v4.1-flash",
+  "nemotron-ultra": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "nemotron-lightning": "nvidia/nemotron-3.5-lightning:free",
+  "inkling": "thinkingmachines/inkling:free",
+  "gemma-4-31b": "google/gemma-4-31b-it:free",
+  "north-mini-code": "cohere/north-mini-code:free",
+  "laguna-s": "poolside/laguna-s-2.1:free",
+  "ling-flash": "inclusionai/ling-3.1-flash",
+  "lfm-mini": "liquid/lfm-2.5-2.6b:free",
+  "openrouter-auto": "openrouter/free",
+  "gpt-oss-120b": "groq/openai/gpt-oss-120b",
+  "gpt-oss-20b": "groq/openai/gpt-oss-20b",
+  "qwen3-27b": "groq/qwen/qwen3.8-27b",
+  "command-a": "cohere/command-a-03-2025",
+  "command-r7b": "cohere/command-r7b-12-2024",
+  "custom": "custom",
 };
 
-// Cost buckets are derived by hand from per-token pricing in
-// src/lib/usage-pricing.ts. If you change pricing there, update the `cost`
-// field below in the same PR.
-//
-// Buckets (USD per million tokens):
-//   $     = input < $0.50 AND output < $1
-//   $$    = input < $1.50 AND output < $6
-//   $$$   = input < $4    AND output < $20
-//   $$$$  = input < $10   AND output < $50
-//   $$$$$ = input >= $10  OR  output >= $50
+// 所有模型皆為供應商免費方案，故 cost 一律為 "Free"。
+// intelligence / speed 為相對評分（0.5–5.0），依參數量、上下文與供應商
+// 公告的吞吐（如 Groq gpt-oss-120b ~500 t/s）手工估計，僅供 picker 顯示。
 export const MODEL_CATALOG: Readonly<Record<LlmModel, ModelCatalogEntry>> = {
-  "opus-5.5": {
-    id: "opus-5.5",
-    label: "Opus 5.5",
-    providerLogo: "claude",
+  "nemotron-ultra": {
+    id: "nemotron-ultra",
+    label: "Nemotron 3 Ultra 550B (free)",
+    providerLogo: "openrouter",
     providerOrder: 0,
     modelOrder: 0,
-    cost: "$$$$",
+    cost: "Free",
     intelligence: 4.5,
     speed: 2,
   },
-  "fable-5.1": {
-    id: "fable-5.1",
-    label: "Fable 5.1",
-    providerLogo: "claude",
+  "nemotron-lightning": {
+    id: "nemotron-lightning",
+    label: "Nemotron 3.5 Lightning (free)",
+    providerLogo: "openrouter",
     providerOrder: 0,
     modelOrder: 1,
-    cost: "$$$$$",
-    intelligence: 5,
-    speed: 2,
-  },
-  sonnet: {
-    id: "sonnet",
-    label: "Sonnet 5.5",
-    providerLogo: "claude",
-    providerOrder: 0,
-    modelOrder: 2,
-    cost: "$$$",
-    intelligence: 4,
-    speed: 3.5,
-  },
-  "haiku-5.5": {
-    id: "haiku-5.5",
-    label: "Haiku 5.5",
-    providerLogo: "claude",
-    providerOrder: 0,
-    modelOrder: 3,
-    cost: "$",
+    cost: "Free",
     intelligence: 3.5,
     speed: 4.5,
   },
-  "gpt-6.1-sol": {
-    id: "gpt-6.1-sol",
-    label: "GPT-6.1 Sol",
-    providerLogo: "openai",
-    providerOrder: 1,
-    modelOrder: 0,
-    cost: "$$$",
-    intelligence: 5,
-    speed: 3.5,
-  },
-  "gpt-6-luna": {
-    id: "gpt-6-luna",
-    label: "GPT-6 Luna",
-    providerLogo: "openai",
-    providerOrder: 1,
-    modelOrder: 1,
-    cost: "$",
-    intelligence: 4,
-    speed: 4.5,
-  },
-  "gpt-5.6-terra-bedrock": {
-    id: "gpt-5.6-terra-bedrock",
-    label: "GPT-5.6 Terra Bedrock",
-    providerLogo: "openai",
-    providerOrder: 1,
+  "inkling": {
+    id: "inkling",
+    label: "Inkling (free)",
+    providerLogo: "openrouter",
+    providerOrder: 0,
     modelOrder: 2,
-    cost: "$$$",
-    intelligence: 4.5,
-    speed: 3.5,
-  },
-  custom: {
-    id: "custom",
-    label: "Custom model",
-    providerLogo: "openai",
-    providerOrder: 1,
-    modelOrder: 7,
-    cost: "$",
-    intelligence: 3,
+    cost: "Free",
+    intelligence: 4,
     speed: 3,
   },
-  "gemini-3.8-flash": {
-    id: "gemini-3.8-flash",
-    label: "Gemini 3.8 Flash",
-    providerLogo: "gemini",
-    providerOrder: 2,
-    modelOrder: 0,
-    cost: "$$",
-    intelligence: 4,
+  "gemma-4-31b": {
+    id: "gemma-4-31b",
+    label: "Gemma 4 31B (free)",
+    providerLogo: "openrouter",
+    providerOrder: 0,
+    modelOrder: 3,
+    cost: "Free",
+    intelligence: 3.5,
+    speed: 3.5,
+  },
+  "north-mini-code": {
+    id: "north-mini-code",
+    label: "North Mini Code (free)",
+    providerLogo: "openrouter",
+    providerOrder: 0,
+    modelOrder: 4,
+    cost: "Free",
+    intelligence: 3.5,
+    speed: 4,
+  },
+  "laguna-s": {
+    id: "laguna-s",
+    label: "Laguna S 2.1 (free)",
+    providerLogo: "openrouter",
+    providerOrder: 0,
+    modelOrder: 5,
+    cost: "Free",
+    intelligence: 3.5,
+    speed: 3.5,
+  },
+  "ling-flash": {
+    id: "ling-flash",
+    label: "Ling 3.1 Flash (free)",
+    providerLogo: "openrouter",
+    providerOrder: 0,
+    modelOrder: 6,
+    cost: "Free",
+    intelligence: 3,
     speed: 4.5,
   },
-  "deepseek-v4-auto": {
-    id: "deepseek-v4-auto",
-    label: "camelCode",
-    providerLogo: "camelai",
-    providerOrder: 3,
-    modelOrder: 0,
+  "lfm-mini": {
+    id: "lfm-mini",
+    label: "LFM 2.5 2.6B (free)",
+    providerLogo: "openrouter",
+    providerOrder: 0,
+    modelOrder: 7,
+    cost: "Free",
+    intelligence: 2,
+    speed: 5,
+  },
+  "openrouter-auto": {
+    id: "openrouter-auto",
+    label: "OpenRouter Auto (free)",
+    providerLogo: "openrouter",
+    providerOrder: 0,
+    modelOrder: 8,
     cost: "Free",
     intelligence: 3,
     speed: 3.5,
   },
-  "deepseek-v4.1-flash": {
-    id: "deepseek-v4.1-flash",
-    label: "DeepSeek V4.1 Flash",
-    providerLogo: "deepseek",
-    providerOrder: 3,
+  "gpt-oss-120b": {
+    id: "gpt-oss-120b",
+    label: "GPT-OSS 120B (Groq free)",
+    providerLogo: "openai",
+    providerOrder: 1,
+    modelOrder: 0,
+    cost: "Free",
+    intelligence: 4,
+    speed: 4.5,
+  },
+  "gpt-oss-20b": {
+    id: "gpt-oss-20b",
+    label: "GPT-OSS 20B (Groq free)",
+    providerLogo: "openai",
+    providerOrder: 1,
     modelOrder: 1,
-    cost: "$$",
-    intelligence: 2,
+    cost: "Free",
+    intelligence: 3,
     speed: 5,
   },
-  "kimi-k3": {
-    id: "kimi-k3",
-    label: "Kimi K3",
-    providerLogo: "kimi",
-    providerOrder: 4,
-    modelOrder: 0,
-    cost: "$$$",
-    intelligence: 4,
-    speed: 3,
-  },
-  "grok-4.7": {
-    id: "grok-4.7",
-    label: "Grok 4.7",
-    providerLogo: "grok",
-    providerOrder: 5,
-    modelOrder: 0,
-    cost: "$$$",
-    intelligence: 4,
-    speed: 4.5,
-  },
-  "glm-5.3": {
-    id: "glm-5.3",
-    label: "GLM 5.3",
-    providerLogo: "glm",
-    providerOrder: 6,
-    modelOrder: 0,
-    cost: "$$",
+  "qwen3-27b": {
+    id: "qwen3-27b",
+    label: "Qwen3.8 27B (Groq free)",
+    providerLogo: "openai",
+    providerOrder: 1,
+    modelOrder: 2,
+    cost: "Free",
     intelligence: 3.5,
+    speed: 4.5,
+  },
+  "command-a": {
+    id: "command-a",
+    label: "Command A (Cohere trial)",
+    providerLogo: "openai",
+    providerOrder: 1,
+    modelOrder: 3,
+    cost: "Free",
+    intelligence: 4,
     speed: 3,
   },
-  "glm-5.3-flash": {
-    id: "glm-5.3-flash",
-    label: "GLM 5.3 Flash",
-    providerLogo: "glm",
-    providerOrder: 6,
-    modelOrder: 1,
-    cost: "$",
-    intelligence: 2.5,
+  "command-r7b": {
+    id: "command-r7b",
+    label: "Command R7B (Cohere trial)",
+    providerLogo: "openai",
+    providerOrder: 1,
+    modelOrder: 4,
+    cost: "Free",
+    intelligence: 3,
     speed: 4.5,
+  },
+  "custom": {
+    id: "custom",
+    label: "Custom model",
+    providerLogo: "camelai",
+    providerOrder: 2,
+    modelOrder: 0,
+    cost: "Free",
+    intelligence: 3,
+    speed: 3,
   },
 };
 
@@ -244,7 +241,7 @@ export interface ResolvedModelCatalogEntry extends ModelCatalogEntry {
   addedAt: number;
 }
 
-const PINNED_MODEL_IDS = new Set<LlmModel>(["deepseek-v4-auto"]);
+const PINNED_MODEL_IDS = new Set<LlmModel>(["north-mini-code"]);
 
 export function compareModelCatalogEntries(
   a: ModelCatalogEntry,

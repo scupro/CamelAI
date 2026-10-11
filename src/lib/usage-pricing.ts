@@ -24,9 +24,56 @@ export interface UsageTokens {
   upstreamInferenceCostUsd?: number | null;
 }
 
-const SONNET_FALLBACK_MODEL = "claude-sonnet-5-5";
+/**
+ * 未知模型的預設計價。
+ *
+ * Free Tier 版改為 $0：原本 fallback 到 `claude-sonnet-5-5`，會讓任何未登記的
+ * 免費模型在用量／成本顯示上被當成昂貴的 Sonnet 計費。本部署的模型清單全部
+ * 是免費模型（見 docs/free-models.md），未登記時視為 $0 才符合實際。
+ */
+const SONNET_FALLBACK_MODEL = "free-tier-fallback";
 
 const modelPricingTable: Record<string, ModelPricing> = {
+  // ---------------------------------------------------------------------
+  // Free Tier 免費模型（查證日期 2026-10-11，見 docs/free-models.md）
+  // 全部為 $0：OpenRouter :free 端點、Groq 免費方案、Cohere 試用金鑰。
+  // 這批必須登記，否則 lookupPricing 會 fallback 到昂貴的 Sonnet（見下方）。
+  // ---------------------------------------------------------------------
+  "nvidia/nemotron-3-ultra-550b-a55b:free": { inputPerToken: 0, outputPerToken: 0 },
+  "nvidia/nemotron-3.5-lightning:free": { inputPerToken: 0, outputPerToken: 0 },
+  "thinkingmachines/inkling:free": { inputPerToken: 0, outputPerToken: 0 },
+  "google/gemma-4-31b-it:free": { inputPerToken: 0, outputPerToken: 0 },
+  "cohere/north-mini-code:free": { inputPerToken: 0, outputPerToken: 0 },
+  "poolside/laguna-s-2.1:free": { inputPerToken: 0, outputPerToken: 0 },
+  "inclusionai/ling-3.1-flash": { inputPerToken: 0, outputPerToken: 0 },
+  "liquid/lfm-2.5-2.6b:free": { inputPerToken: 0, outputPerToken: 0 },
+  "openrouter/free": { inputPerToken: 0, outputPerToken: 0 },
+  "groq/openai/gpt-oss-120b": { inputPerToken: 0, outputPerToken: 0 },
+  "groq/openai/gpt-oss-20b": { inputPerToken: 0, outputPerToken: 0 },
+  "groq/qwen/qwen3.8-27b": { inputPerToken: 0, outputPerToken: 0 },
+  "cohere/command-a-03-2025": { inputPerToken: 0, outputPerToken: 0 },
+  "cohere/command-r7b-12-2024": { inputPerToken: 0, outputPerToken: 0 },
+  "nemotron-ultra": { inputPerToken: 0, outputPerToken: 0 },
+  "nemotron-lightning": { inputPerToken: 0, outputPerToken: 0 },
+  "inkling": { inputPerToken: 0, outputPerToken: 0 },
+  "gemma-4-31b": { inputPerToken: 0, outputPerToken: 0 },
+  "north-mini-code": { inputPerToken: 0, outputPerToken: 0 },
+  "laguna-s": { inputPerToken: 0, outputPerToken: 0 },
+  "ling-flash": { inputPerToken: 0, outputPerToken: 0 },
+  "lfm-mini": { inputPerToken: 0, outputPerToken: 0 },
+  "openrouter-auto": { inputPerToken: 0, outputPerToken: 0 },
+  "gpt-oss-120b": { inputPerToken: 0, outputPerToken: 0 },
+  "gpt-oss-20b": { inputPerToken: 0, outputPerToken: 0 },
+  "qwen3-27b": { inputPerToken: 0, outputPerToken: 0 },
+  "command-a": { inputPerToken: 0, outputPerToken: 0 },
+  "command-r7b": { inputPerToken: 0, outputPerToken: 0 },
+  "openai/gpt-oss-120b": { inputPerToken: 0, outputPerToken: 0 },
+  "openai/gpt-oss-20b": { inputPerToken: 0, outputPerToken: 0 },
+  "qwen/qwen3.8-27b": { inputPerToken: 0, outputPerToken: 0 },
+  "command-a-03-2025": { inputPerToken: 0, outputPerToken: 0 },
+  "command-r7b-12-2024": { inputPerToken: 0, outputPerToken: 0 },
+  "free-tier-fallback": { inputPerToken: 0, outputPerToken: 0 },
+
   // OpenRouter /api/v1/models and runtime catalog pricing, 2026-09-28.
   "claude-fable-5-1": {
     inputPerToken: 0.00001,

@@ -37,7 +37,7 @@ export type PiBillingSource = "hosted" | "byok";
 export function primaryPiThinkingLevel(
   modelId: string | null | undefined,
 ): "medium" | "high" {
-  return modelId === CAMEL_CODE_LLM_MODEL || modelId === "gpt-6-luna"
+  return modelId === CAMEL_CODE_LLM_MODEL || modelId === "nemotron-ultra"
     ? "high"
     : "medium";
 }

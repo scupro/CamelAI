@@ -7,47 +7,93 @@ import { decryptCredentials } from "./integration-crypto";
 
 // Only unset models fall back to these; stored thread models and configured
 // picker defaults keep their explicit choice.
-export const DEFAULT_LLM_MODEL: LlmModel = "gpt-6-luna";
-export const DEFAULT_OPENAI_MODEL: LlmModel = "gpt-6-luna";
-export const DEFAULT_OPENROUTER_MODEL: LlmModel = "gpt-6-luna";
-/** The default for keys that cannot run Luna (Anthropic, Claude-only Bedrock). */
-export const DEFAULT_ANTHROPIC_MODEL: LlmModel = "sonnet";
 export const CUSTOM_LLM_MODEL: LlmModel = "custom";
 export const THREAD_MODEL_LOCK_MESSAGE =
   "This thread is locked to its original model. Start a new thread to use a different model.";
 
-// Retired models, read as their closest current replacement.
+// ---------------------------------------------------------------------------
+// Free Tier 模型清單
+//
+// 底下所有 slug 都對應供應商「目前實際提供的免費模型」。查證日期 2026-10-11，
+// 來源、上下文長度與速率限制見 docs/free-models.md。
+// slug → 供應商真實模型 ID 的對映在 workers/main/src/pi-model-resolution.ts。
+// ---------------------------------------------------------------------------
+
+/** 未設定 provider 時的預設：OpenRouter 免費、1M 上下文的旗艦模型。 */
+export const DEFAULT_LLM_MODEL: LlmModel = "nemotron-ultra";
+/** provider = openai（含 Groq 等 OpenAI 相容端點）時的預設。 */
+export const DEFAULT_OPENAI_MODEL: LlmModel = "gpt-oss-120b";
+export const DEFAULT_OPENROUTER_MODEL: LlmModel = "nemotron-ultra";
+/**
+ * Anthropic / Bedrock 沒有免費模型，因此不提供選項清單；使用這兩個 provider 時
+ * 一律透過 custom_model_id 自訂模型。
+ */
+export const DEFAULT_ANTHROPIC_MODEL: LlmModel = CUSTOM_LLM_MODEL;
+
+/**
+ * 退役模型 → 最接近的免費替代。DB 裡已存的舊模型 ID 靠這張表轉譯，
+ * 否則既有對話會拿到無效模型。
+ */
 const STORED_LLM_MODEL_REPLACEMENTS: Readonly<Record<string, LlmModel>> = {
-  "gemini-3.1-pro-preview": "gemini-3.8-flash",
-  "gemini-3.5-flash": "gemini-3.8-flash",
-  "gemini-3-flash-preview": "gemini-3.8-flash",
-  "deepseek-v4-pro": "deepseek-v4.1-flash",
-  "deepseek-v4-flash": "deepseek-v4.1-flash",
-  "kimi-k2.6": "kimi-k3",
-  "kimi-latest": "kimi-k3",
-  "kimi-k2.7-code": "kimi-k3",
-  "grok-4.3": "grok-4.7",
-  "grok-latest": "grok-4.7",
-  "grok-4.5": "grok-4.7",
-  "glm-5.2": "glm-5.3",
-  "glm-latest": "glm-5.3",
-  opus: "opus-5.5",
-  "opus-4.7": "opus-5.5",
-  "opus-4.8": "opus-5.5",
-  "opus-5": "opus-5.5",
-  "fable-5": "fable-5.1",
-  "gpt-6-sol": "gpt-6.1-sol",
-  "gpt-5.6-sol": "gpt-6.1-sol",
-  "gpt-5.6-terra": "gpt-6.1-sol",
-  "gpt-5.6-luna": "gpt-6-luna",
-  "gpt-5.5": "gpt-6.1-sol",
-  "gpt-5.4": "gpt-6.1-sol",
-  "gpt-5.4-mini": "gpt-6-luna",
-  // Sonnet runs on every key that could run Haiku, including Claude-only ones.
-  haiku: "sonnet",
+  // 2026-10 全面改為免費模型時退役的 camelAI 託管／Anthropic／OpenAI／Bedrock slug
+  sonnet: "nemotron-ultra",
+  "haiku-5.5": "lfm-mini",
+  "fable-5.1": "nemotron-ultra",
+  "opus-5.5": "nemotron-ultra",
+  "gpt-6.1-sol": "gpt-oss-120b",
+  "gpt-6-luna": "gpt-oss-20b",
+  "gpt-5.6-terra-bedrock": "gpt-oss-120b",
+  "kimi-k3": "north-mini-code",
+  "grok-4.7": "nemotron-ultra",
+  "glm-5.3": "ling-flash",
+  "glm-5.3-flash": "lfm-mini",
+  "gemini-3.8-flash": "gemma-4-31b",
+  "deepseek-v4-auto": "north-mini-code",
+  "deepseek-v4.1-flash": "ling-flash",
+  // 更早已退役的產品／供應商 ID（沿用原表，值改指向免費模型）
+  "gemini-3.1-pro-preview": "gemma-4-31b",
+  "gemini-3.5-flash": "gemma-4-31b",
+  "gemini-3-flash-preview": "gemma-4-31b",
+  "deepseek-v4-pro": "ling-flash",
+  "deepseek-v4-flash": "ling-flash",
+  "kimi-k2.6": "north-mini-code",
+  "kimi-latest": "north-mini-code",
+  "kimi-k2.7-code": "north-mini-code",
+  "moonshotai/kimi-latest": "north-mini-code",
+  "moonshotai/kimi-k2.6": "north-mini-code",
+  "moonshotai/kimi-k2.7-code": "north-mini-code",
+  "grok-4.3": "nemotron-ultra",
+  "grok-latest": "nemotron-ultra",
+  "grok-4.5": "nemotron-ultra",
+  "x-ai/grok-4.5": "nemotron-ultra",
+  "x-ai/grok-4.3": "nemotron-ultra",
+  "x-ai/grok-latest": "nemotron-ultra",
+  "glm-5.2": "ling-flash",
+  "glm-latest": "ling-flash",
+  "z-ai/glm-5.2": "ling-flash",
+  "z-ai/glm-latest": "ling-flash",
+  opus: "nemotron-ultra",
+  "opus-4.7": "nemotron-ultra",
+  "opus-4.8": "nemotron-ultra",
+  "opus-5": "nemotron-ultra",
+  "fable-5": "nemotron-ultra",
+  "claude-fable-5": "nemotron-ultra",
+  "gpt-6-sol": "gpt-oss-120b",
+  "gpt-5.6-sol": "gpt-oss-120b",
+  "gpt-5.6-terra": "gpt-oss-120b",
+  "gpt-5.6-luna": "gpt-oss-20b",
+  "gpt-5.5": "gpt-oss-120b",
+  "gpt-5.4": "gpt-oss-120b",
+  "gpt-5.4-mini": "gpt-oss-20b",
+  haiku: "lfm-mini",
+  // Anthropic 真實模型 ID（Anthropic 無免費方案）
+  "claude-sonnet-5-5": "nemotron-ultra",
+  "claude-opus-5-5": "nemotron-ultra",
+  "claude-haiku-5-5": "lfm-mini",
+  "claude-fable-5-1": "nemotron-ultra",
 };
 
-// Bedrock has no GPT-6 Sol or Luna, so its retired OpenAI models land on Terra.
+/** Bedrock 沒有免費模型；退役的 Bedrock OpenAI 模型一律轉到 Groq 免費方案。 */
 const STORED_BEDROCK_OPENAI_MODELS = new Set([
   "gpt-5.6-sol",
   "gpt-5.6-terra",
@@ -57,91 +103,112 @@ const STORED_BEDROCK_OPENAI_MODELS = new Set([
   "gpt-5.4",
   "gpt-5.5-bedrock",
   "gpt-5.4-bedrock",
+  "gpt-5.6-terra-bedrock",
 ]);
 
 // When adding a model here, also add it to the picker catalog at
 // src/lib/model-catalog.ts and the pricing table at src/lib/usage-pricing.ts.
+
+/** Anthropic 沒有免費模型，故選項為空；需要時請改用 custom_model_id。 */
 export const ANTHROPIC_LLM_MODEL_OPTIONS: ReadonlyArray<{
+  value: LlmModel;
+  label: string;
+  description: string;
+}> = [];
+
+/**
+ * OpenRouter 免費模型（API 回報 pricing 全為 0）。458 個模型中篩出 19 個免費，
+ * 排除音樂生成（google/lyria-3-*）與純內容安全（nemotron-3.5-content-safety）
+ * 後為底下 9 個。
+ */
+export const OPENROUTER_LLM_MODEL_OPTIONS: ReadonlyArray<{
   value: LlmModel;
   label: string;
   description: string;
 }> = [
   {
-    value: "opus-5.5",
-    label: "Opus 5.5",
-    description: "Flagship coding model",
+    value: "nemotron-ultra",
+    label: "Nemotron 3 Ultra 550B (free)",
+    description: "OpenRouter 免費・1M 上下文・550B MoE，免費清單中最大",
   },
   {
-    value: "fable-5.1",
-    label: "Fable 5.1",
-    description: "Highest-capability Claude model",
+    value: "nemotron-lightning",
+    label: "Nemotron 3.5 Lightning (free)",
+    description: "OpenRouter 免費・1M 上下文・高速",
   },
   {
-    value: "sonnet",
-    label: "Sonnet 5.5",
-    description: "Balanced Claude model",
+    value: "inkling",
+    label: "Inkling (free)",
+    description: "OpenRouter 免費・1M 上下文・文字＋圖片＋音訊輸入",
   },
   {
-    value: "haiku-5.5",
-    label: "Haiku 5.5",
-    description: "Fast, low-cost Claude model",
+    value: "gemma-4-31b",
+    label: "Gemma 4 31B (free)",
+    description: "OpenRouter 免費・262k 上下文・文字＋圖片＋影片輸入",
+  },
+  {
+    value: "north-mini-code",
+    label: "Cohere North Mini Code (free)",
+    description: "OpenRouter 免費・256k 上下文・agentic coding 專用",
+  },
+  {
+    value: "laguna-s",
+    label: "Poolside Laguna S 2.1 (free)",
+    description: "OpenRouter 免費・262k 上下文・程式取向",
+  },
+  {
+    value: "ling-flash",
+    label: "Ling 3.1 Flash (free)",
+    description: "OpenRouter 免費・262k 上下文・快速",
+  },
+  {
+    value: "lfm-mini",
+    label: "LFM 2.5 2.6B (free)",
+    description: "OpenRouter 免費・65k 上下文・最小最快",
+  },
+  {
+    value: "openrouter-auto",
+    label: "OpenRouter Auto (free)",
+    description: "自動路由到當前可用的免費模型・200k 上下文",
   },
 ];
 
+/**
+ * OpenAI 相容端點上的免費模型：Groq 免費方案與 Cohere 試用金鑰。
+ * 這些不是 OpenAI 自家模型，需搭配對應 base_url：
+ *   Groq   → https://api.groq.com/openai/v1
+ *   Cohere → https://api.cohere.ai/compatibility/v1
+ * 注意 Groq 的 llama-3.3-70b-versatile / llama-3.1-8b-instant 已轉為 Enterprise，不再免費。
+ */
 export const OPENAI_COMPATIBLE_LLM_MODEL_OPTIONS: ReadonlyArray<{
   value: LlmModel;
   label: string;
   description: string;
 }> = [
   {
-    value: "gpt-6.1-sol",
-    label: "GPT-6.1 Sol",
-    description: "High-capability OpenAI model",
+    value: "gpt-oss-120b",
+    label: "GPT-OSS 120B (Groq free)",
+    description: "Groq 免費方案・131k 上下文・30 RPM / 1,000 RPD / 8K TPM",
   },
   {
-    value: "gpt-6-luna",
-    label: "GPT-6 Luna",
-    description: "Default fast OpenAI reasoning model",
+    value: "gpt-oss-20b",
+    label: "GPT-OSS 20B (Groq free)",
+    description: "Groq 免費方案・131k 上下文・30 RPM / 1,000 RPD / 8K TPM",
   },
   {
-    value: "gpt-5.6-terra-bedrock",
-    label: "GPT-5.6 Terra Bedrock",
-    description: "GPT-5.6 Terra through Amazon Bedrock",
+    value: "qwen3-27b",
+    label: "Qwen3.8 27B (Groq free)",
+    description: "Groq 免費方案・131k 上下文・最大輸出 16k",
   },
   {
-    value: "gemini-3.8-flash",
-    label: "Gemini 3.8 Flash",
-    description: "OpenRouter/camelAI hosted fast high-intelligence coding model",
+    value: "command-a",
+    label: "Cohere Command A (trial)",
+    description: "Cohere 試用金鑰・256k 上下文・每月 1,000 次呼叫上限",
   },
   {
-    value: "deepseek-v4-auto",
-    label: "camelCode",
-    description: "camelAI hosted model with automatic routing",
-  },
-  {
-    value: "deepseek-v4.1-flash",
-    label: "DeepSeek V4.1 Flash",
-    description: "OpenRouter/camelAI hosted faster and cheaper model",
-  },
-  {
-    value: "kimi-k3",
-    label: "Kimi K3",
-    description: "OpenRouter/camelAI hosted open-weight flagship model",
-  },
-  {
-    value: "grok-4.7",
-    label: "Grok 4.7",
-    description: "OpenRouter/camelAI hosted model",
-  },
-  {
-    value: "glm-5.3",
-    label: "GLM 5.3",
-    description: "OpenRouter/camelAI hosted model",
-  },
-  {
-    value: "glm-5.3-flash",
-    label: "GLM 5.3 Flash",
-    description: "OpenRouter/camelAI hosted fast and cheap model",
+    value: "command-r7b",
+    label: "Cohere Command R7B (trial)",
+    description: "Cohere 試用金鑰・128k 上下文・小而快・每月 1,000 次上限",
   },
 ];
 
@@ -163,27 +230,34 @@ export const LLM_MODEL_OPTIONS: ReadonlyArray<{
   description: string;
 }> = [
   ...ANTHROPIC_LLM_MODEL_OPTIONS,
+  ...OPENROUTER_LLM_MODEL_OPTIONS,
   ...OPENAI_COMPATIBLE_LLM_MODEL_OPTIONS,
   ...CUSTOM_LLM_MODEL_OPTIONS,
 ];
 
+/** 只能透過 OpenRouter 取得的免費模型。 */
 const OPENROUTER_ONLY_MODELS = new Set<LlmModel>([
-  "kimi-k3",
-  "grok-4.7",
-  "glm-5.3",
-  "glm-5.3-flash",
-  "gemini-3.8-flash",
-  "deepseek-v4.1-flash",
+  "nemotron-ultra",
+  "nemotron-lightning",
+  "inkling",
+  "gemma-4-31b",
+  "north-mini-code",
+  "laguna-s",
+  "ling-flash",
+  "lfm-mini",
+  "openrouter-auto",
 ]);
 
-const CAMELAI_HOSTED_ONLY_MODELS = new Set<LlmModel>([
-  "deepseek-v4-auto",
-]);
+/** camelAI 託管模型已全部退役（自架部署呼叫不到），此集合保留為空。 */
+const CAMELAI_HOSTED_ONLY_MODELS = new Set<LlmModel>([]);
 
-// These hosted models remain metered for operational visibility, but their
-// usage does not consume an organization's camelAI credits.
-export const CAMEL_CODE_LLM_MODEL = "deepseek-v4-auto" satisfies LlmModel;
+/**
+ * 「camelCode」這個產品名稱沿用，但底層已從 camelAI 託管的 deepseek-v4-auto
+ * 改為 OpenRouter 免費的 Cohere North Mini Code（agentic coding 專用、256k）。
+ */
+export const CAMEL_CODE_LLM_MODEL = "north-mini-code" satisfies LlmModel;
 
+// 所有模型現在都是免費的，credit-free 的區分已無實質意義，僅保留符號相容性。
 const CREDIT_FREE_HOSTED_MODELS = new Set<LlmModel>([
   CAMEL_CODE_LLM_MODEL,
 ]);
@@ -206,13 +280,11 @@ function sortVisibleLlmModelOptions<
   );
 }
 
-const BEDROCK_ONLY_OPENAI_MODELS = new Set<LlmModel>([
-  "gpt-5.6-terra-bedrock",
-]);
+/** Bedrock 沒有免費模型，此集合保留為空。 */
+const BEDROCK_ONLY_OPENAI_MODELS = new Set<LlmModel>([]);
 
-export const BEDROCK_OPENAI_MODEL_REGIONS: Readonly<Record<string, readonly string[]>> = {
-  "gpt-5.6-terra-bedrock": ["us-east-1", "us-east-2", "us-west-2"],
-};
+/** Bedrock 沒有免費模型，故無區域限制表。 */
+export const BEDROCK_OPENAI_MODEL_REGIONS: Readonly<Record<string, readonly string[]>> = {};
 
 export function getBedrockOpenAiModelRegions(
   model: LlmModel,
@@ -263,15 +335,8 @@ export function getDefaultLlmModel(
 ): LlmModel {
   if (orgProvider === "openai") return DEFAULT_OPENAI_MODEL;
   if (orgProvider === "openrouter") return DEFAULT_OPENROUTER_MODEL;
-  if (
-    orgProvider === "bedrock" &&
-    isBedrockOpenAiModelAllowedInRegion(
-      "gpt-5.6-terra-bedrock",
-      options?.awsRegion,
-    )
-  ) {
-    return "gpt-5.6-terra-bedrock";
-  }
+  // Bedrock 沒有免費模型，故不在此回傳特定模型；bedrock provider 會落到
+  // 底下的 DEFAULT_ANTHROPIC_MODEL（= custom），由 custom_model_id 決定。
   if (orgProvider === "custom" && hasCustomModelId(options?.customModelId)) {
     return CUSTOM_LLM_MODEL;
   }
