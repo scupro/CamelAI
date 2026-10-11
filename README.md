@@ -123,7 +123,7 @@
 
 ```
 CamelAI/
-├── .gitignore                # 忽略 build 輸出與金鑰
+├── .gitignore                # 忽略 build 輸出
 ├── package.json              # 依賴與 build:cf 腳本（純 npm，不用 bun）
 ├── wrangler.jsonc            # Free Tier 配置：D1 + KV + AI + DO，無 R2/container/queue
 ├── react-router.config.ts    # React Router 框架設定（appDirectory: src、SSR）
