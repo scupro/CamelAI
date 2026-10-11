@@ -34,11 +34,7 @@
 
 以下步驟將 GitHub 倉庫與 Cloudflare Workers 綁定並一鍵部署。
 
-### 步驟 1：準備 GitHub 倉庫
-
-倉庫 `scupro/CamelAI` 已存在，且已將 **Deploy Key** 添加至 `Settings → Deploy keys`（勾選 `Allow write access`）。
-
-### 步驟 2：連接 Cloudflare 面板
+### 步驟 1：連接 Cloudflare 面板
 
 1. 登入 [Cloudflare Dashboard](https://dash.cloudflare.com/)。
 2. 進入 **Workers & Pages**。
