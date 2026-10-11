@@ -22,7 +22,6 @@ export async function loader({ context }: LoaderFunctionArgs) {
 
   checks.push(required("APP_KV", env.APP_KV));
   checks.push(required("SESSIONS", env.SESSIONS));
-  checks.push(required("R2_BUCKET", env.R2_BUCKET));
   checks.push(required("APP_DB", env.APP_DB));
   checks.push(required("ARTIFACTS", env.ARTIFACTS));
   checks.push(configuredComputeBinding("PROJECT_BUILD_SANDBOX", env.PROJECT_BUILD_SANDBOX));

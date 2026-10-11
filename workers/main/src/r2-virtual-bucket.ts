@@ -14,7 +14,7 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 
 interface R2VirtualBucketEnv {
-  R2_BUCKET: R2Bucket;
+  R2_BUCKET?: R2Bucket;
 }
 
 interface R2VirtualBucketProps {
@@ -90,7 +90,15 @@ export class R2VirtualBucket extends WorkerEntrypoint<R2VirtualBucketEnv, R2Virt
   }
 
   private get bucket(): R2Bucket {
-    return this.env.R2_BUCKET;
+    // Free Tier 不提供 R2。這個 entrypoint 只在使用者 app 自己宣告 r2_bucket 綁定時
+    // 才會被掛上，而該情況在本部署不存在；走到這裡代表設定不一致，明確報錯。
+    const bucket = this.env.R2_BUCKET;
+    if (!bucket) {
+      throw new Error(
+        "R2VirtualBucket requires an R2_BUCKET binding, which is not available in this deployment",
+      );
+    }
+    return bucket;
   }
 
   /** Full prefix for this workspace + bucket. */

@@ -3,6 +3,12 @@
   // Free Tier 版：僅保留 D1 + KV + AI + Durable Objects
   // 已移除：containers（付費）、R2、queues、analytics_engine、browser、images、
   //        worker_loaders、send_email、tail_consumers、observability、workflows
+  //
+  // R2 特別說明：R2 有免費額度（10 GB-month／100 萬 Class A／1000 萬 Class B），
+  // 但「啟用」必須先登記信用卡，且免費額度是計費門檻而非硬限制（超出即扣費）。
+  // 為了維持「不需信用卡、不會被扣費」，這裡刻意不宣告任何 r2_buckets 綁定，
+  // 因此執行期 env.R2_BUCKET 恆為 undefined；所有存取點皆已加守卫，回 501/ENOR2
+  // 或略過，不會 crash。詳見 README「為什麼不綁 R2」。
   "name": "camelai",
   "main": "workers/main/src/index.ts",
   "compatibility_date": "2026-03-24",

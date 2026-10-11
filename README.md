@@ -10,7 +10,7 @@
 
 本項目修改自 [qaml-ai/camelAI](https://github.com/qaml-ai/camelAI)（MIT License）：
 - 原項目：`an AI coding assistant platform built on Cloudflare Workers and Durable Objects`
-- 修改原因：原項目依賴 R2、Durable Objects 容器、Queues 等付費／高階資源，無法完全在 Free 層運行
+- 修改原因：原項目依賴 R2（啟用需登記信用卡）、Durable Objects 容器、Queues 等需付費或需登記付款方式的資源，無法在「不綁信用卡」的前提下運行
 - 本項目保留核心：Durable Objects（ChatThreadDO、UserDO、OrgDO、SignupDO、WorkspaceDO、WorkspaceFilesystemDO 等）、D1 資料庫、KV 命名空間、Workers AI、完整 React Router Web UI
 
 ### 已刪除的高階／付費功能
@@ -21,12 +21,37 @@
 | Notebook 與程式碼執行 | Sandbox 容器（`ANALYSIS_SANDBOX`） | 執行路徑刪除；`.ipynb` 唯讀預覽仍保留（純靜態渲染） |
 | 專案建置與部署 | 建置容器（`PROJECT_BUILD_SANDBOX`）、Dispatch Nest、Worker Loader | 部署／建置流程刪除 |
 | SQL 連線查詢 | 查詢容器（`DB_QUERY_SANDBOX`）、DB egress relay | 查詢與倉儲匯出刪除；其他 OAuth 型整合不受影響 |
-| 大檔暫存／倉儲匯出 | R2 bucket | 匯出與暫存路徑刪除 |
+| 物件儲存（上傳／預覽／截圖／快照／倉儲匯出） | R2 bucket | **完全不宣告 R2 綁定**；所有 `env.R2_BUCKET` 存取點加守卫，回 501 / `ENOR2` 明確錯誤，不會 crash（詳見下方專節） |
 | 網頁截圖／瀏覽器操作 | Browser Rendering（`BROWSER`） | 截圖佇列與渲染路徑刪除 |
 | Slack／Discord 訊息通道 | Queues、Discord bridge 服務綁定 | 佇列處理器與路由刪除（僅保留安全的 no-op 介面） |
 | 自動化 Workflow | Workflows 綁定 | 類別保留為佔位，呼叫即明確報錯 |
 
 > 說明：上列表章的 **UI 入口與 API 路由都已移除**；少數仍被底層引用的模組改寫為「Free Tier 佔位模組」，只留型別與符號，實際呼叫會拋出 `Free Tier：已移除○○` 的明確錯誤，不會靜默失敗。
+
+### 為什麼不綁 R2（即使 R2 有免費額度）
+
+R2 本身有免費額度（10 GB-month 儲存、每月 100 萬次 Class A、1000 萬次 Class B、egress 免費），但本部署刻意不使用，原因是：
+
+1. **啟用 R2 必須先登記付款方式（信用卡）**，與「Free Tier 不需信用卡」的目標直接衝突；
+2. 免費額度是**計費門檻而非硬限制**——Class A/B 操作次數或其他額度一旦超出就開始扣費，不會自動阻擋，也就不是真正的 free。
+
+因此 `wrangler.jsonc` **完全沒有 `r2_buckets` 區塊**，執行期 `env.R2_BUCKET` 恆為 `undefined`；型別上一律宣告為選填（`R2_BUCKET?: R2Bucket`），每個存取點都有守卫。
+
+連帶不可用的功能與其實際行為：
+
+| 功能 | 無 R2 時的行為 |
+|------|---------------|
+| 工作區檔案上傳／下載／預覽（`user-uploads`、`user-outputs`） | 回 **501**，訊息註明 storage 不可用 |
+| 已部署 app 的預覽截圖 | 標記 `failed`，`preview_error` 寫明缺 `R2_BUCKET` 綁定 |
+| Email / Slack / Telegram 附件保存 | **略過該附件**，訊息本身仍正常處理 |
+| 專案原始碼快照（建立／還原） | 拋出明確錯誤；「刪除快照」仍會清掉 KV 中繼資料，只是沒有 blob 可刪 |
+| 聊天中大圖片外部化 | 保留 inline 資料，不外掛到物件儲存 |
+| App 預覽（`/api/apps/:scriptName/preview`） | 回 **501** |
+| Admin 物件瀏覽（`/api/admin/r2/*`） | 回 **501** |
+| 倉儲匯出（`WAREHOUSE_EXPORT_BUCKET`） | 已隨 SQL 查詢容器一併移除 |
+| 組織／工作區刪除時的 R2 清理 | no-op（沒有物件可清） |
+
+> `src/lib/workspace-r2-paths.ts` 予以保留：它只是**純字串路徑產生器**（`buildWorkspaceScopedR2Key`），不觸碰 R2 API，被 12 個以上檔案與測試共用。
 
 ---
 

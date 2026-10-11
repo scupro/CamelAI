@@ -8,7 +8,7 @@ import {
 
 interface AssetsVirtualBindingEnv {
   APP_KV: KVNamespace;
-  R2_BUCKET: R2Bucket;
+  R2_BUCKET?: R2Bucket;
 }
 
 interface AssetsVirtualBindingProps {
@@ -39,6 +39,11 @@ export class AssetsVirtualBinding extends WorkerEntrypoint<AssetsVirtualBindingE
     const url = new URL(request.url);
     const entry = lookupAsset(record, decodeURIComponent(url.pathname));
     if (!entry) return new Response("Not Found", { status: 404 });
+
+    // Free Tier 無 R2 綁定（R2 啟用需登記付款方式，操作超量即計費）。
+    if (!this.env.R2_BUCKET) {
+      return new Response("Asset storage is not available in this deployment", { status: 501 });
+    }
 
     const object = await this.env.R2_BUCKET.get(
       selfhostAssetObjectKey(record.appId, entry.hash),

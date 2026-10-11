@@ -123,7 +123,7 @@ export function piCappedSessionLoadPlaceholder(args: {
 
 export interface PiCoreMessageStoreDeps {
   sql(): SqlStorage;
-  r2(): R2Bucket;
+  r2(): R2Bucket | undefined;
   chatContext(): ChatContextState | null;
 }
 
@@ -264,10 +264,13 @@ export class PiCoreMessageStore {
       origin: "session",
     };
     if (this.sessionExternalizedImageKeys.has(key)) return reference;
+    // Free Tier 無 R2 綁定（R2 啟用需登記付款方式，操作超量即計費）：圖片留在訊息的 inline 資料中，不做外部化。
+    const bucket = this.deps.r2();
+    if (!bucket) return reference;
     try {
-      const existing = await this.deps.r2().head(key);
+      const existing = await bucket.head(key);
       if (!existing) {
-        await this.deps.r2().put(key, data, {
+        await bucket.put(key, data, {
           httpMetadata: { contentType: "text/plain; charset=utf-8" },
           customMetadata: {
             type: "pi-message-image-base64",

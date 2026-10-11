@@ -293,9 +293,12 @@ async function collectOrgIdsForUserFromKvPrefix(
 }
 
 async function deleteR2Prefix(
-  bucket: R2Bucket,
+  bucket: R2Bucket | undefined,
   prefix: string,
 ): Promise<number> {
+  // Free Tier 不提供 R2 綁定：R2 啟用需登記付款方式，且 Class A/B 操作超出
+  // 免費額度即開始計費。沒有 bucket 就沒有物件可清，直接視為已完成。
+  if (!bucket) return 0;
   let cursor: string | undefined;
   let deleted = 0;
 

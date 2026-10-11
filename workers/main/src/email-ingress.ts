@@ -338,6 +338,9 @@ async function uploadEmailAttachments(
       (attachment.mimeType || "").trim() || DEFAULT_ATTACHMENT_CONTENT_TYPE;
     const r2Key = buildUploadKey(args.orgId, args.workspaceId, storedFilename);
 
+    // Free Tier 無 R2 綁定：無法保存 email 附件，略過這個附件。
+    if (!env.R2_BUCKET) continue;
+
     try {
       await env.R2_BUCKET.put(r2Key, payload.body, {
         httpMetadata: { contentType },

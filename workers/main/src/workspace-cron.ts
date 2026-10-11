@@ -336,7 +336,7 @@ export interface WorkspaceCronEnv {
   ORG: DurableObjectNamespace<OrgDO>;
   WORKSPACE: DurableObjectNamespace<WorkspaceDO>;
   WORKSPACE_FS: DurableObjectNamespace<WorkspaceFilesystemDO>;
-  R2_BUCKET: R2Bucket;
+  R2_BUCKET?: R2Bucket;
   CHAT_THREAD: DurableObjectNamespace<ChatThreadDO>;
   PROJECT_BUILD_SANDBOX?: DurableObjectNamespace<ProjectBuildContainer>;
   CODE_MODE_LOADER?: WorkerLoader;

@@ -142,6 +142,8 @@ async function attachUploads(
 ): Promise<Array<{ path: string }>> {
   const refs = parseUploadRefs(text).refs.filter((ref) => ref.kind === "user_upload").slice(0, MAX_ATTACHMENTS);
   const files: Array<{ path: string }> = [];
+  // Free Tier 無 R2 綁定：使用者上傳的附件無法取回，直接視為沒有附件。
+  if (!env.R2_BUCKET) return files;
   for (const ref of refs) {
     if (isUnsafeUploadPath(ref.filename)) continue;
     try {

@@ -176,7 +176,7 @@ export interface CfApiProxyEnv {
   EMAIL_TO_USER: KVNamespace;
   APP_KV: KVNamespace;
   APP_DB?: D1Database;
-  R2_BUCKET: R2Bucket;
+  R2_BUCKET?: R2Bucket;
   WORKSPACE: DurableObjectNamespace<WorkspaceDO>;
   WORKSPACE_FS: DurableObjectNamespace<WorkspaceFilesystemDO>;
   ORG: DurableObjectNamespace<OrgDO>;

@@ -14,7 +14,7 @@ export interface DeployedAppDeleteEnv {
   CF_DISPATCH_NAMESPACE?: string;
   CF_API_TOKEN?: string;
   APP_KV: KVNamespace;
-  R2_BUCKET: R2Bucket;
+  R2_BUCKET?: R2Bucket;
 }
 
 export function getDispatchScriptName(
@@ -76,10 +76,13 @@ async function deleteSelfhostAppRuntime(
       ),
     );
 
-    for (let offset = 0; offset < objectKeys.length; offset += R2_DELETE_BATCH_SIZE) {
-      await env.R2_BUCKET.delete(
-        objectKeys.slice(offset, offset + R2_DELETE_BATCH_SIZE),
-      );
+    // Free Tier 無 R2 綁定，沒有物件儲存體可清理。
+    if (env.R2_BUCKET) {
+      for (let offset = 0; offset < objectKeys.length; offset += R2_DELETE_BATCH_SIZE) {
+        await env.R2_BUCKET.delete(
+          objectKeys.slice(offset, offset + R2_DELETE_BATCH_SIZE),
+        );
+      }
     }
   }
 

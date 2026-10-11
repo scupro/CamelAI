@@ -102,7 +102,7 @@ export interface ChatEnv extends WorkspaceFilesystemEnv {
   AGENT_RUNTIME_TENANT?: string;
   AGENT_RUNTIME_API_TOKEN?: string;
   AGENT_RUNTIME_DEFINITION?: string;
-  R2_BUCKET: R2Bucket;
+  R2_BUCKET?: R2Bucket;
   IMAGES?: ImagesBinding;
   AI: Ai;
   ANTHROPIC_API_KEY: string;

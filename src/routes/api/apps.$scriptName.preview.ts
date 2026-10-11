@@ -5,7 +5,7 @@ import { getSession } from '@/lib/auth.server';
 import { isOrgMember } from '@/lib/auth-do';
 
 interface R2Env extends AuthEnv {
-  R2_BUCKET: R2Bucket;
+  R2_BUCKET?: R2Bucket;
 }
 
 function getR2Env(env: CloudflareEnv): R2Env {
@@ -45,6 +45,13 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
     const script = await env.ORG.get(env.ORG.idFromName(session.org_id)).getWorkerScript(normalized);
     if (!script || script.preview_status !== 'ready' || !script.preview_key) {
       return Response.json({ error: 'Preview not available' }, { status: 404 });
+    }
+
+    if (!env.R2_BUCKET) {
+      return Response.json(
+        { error: 'App preview storage (R2) is not available in this deployment' },
+        { status: 501 },
+      );
     }
 
     const object = await env.R2_BUCKET.get(script.preview_key);

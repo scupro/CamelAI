@@ -78,6 +78,14 @@ function parseUploadedParts(value: unknown): Array<{ partNumber: number; etag: s
   return parts.sort((a, b) => a.partNumber - b.partNumber);
 }
 
+/**
+ * Free Tier 沒有 R2 綁定：R2 啟用需登記付款方式，且 Class A/B 操作超出免費額度
+ * 即開始計費，因此本部署不提供物件儲存體。回 501 讓呼叫端知道是「未提供」而非「壞掉」。
+ */
+function r2Unavailable(): Response {
+  return Response.json({ error: 'File upload storage (R2) is not available in this deployment' }, { status: 501 });
+}
+
 async function readJsonBody(request: Request): Promise<unknown | null> {
   try {
     return await request.json();
@@ -116,6 +124,7 @@ async function handleMultipartCreate(
     });
   }
 
+  if (!env.R2_BUCKET) return r2Unavailable();
   const multipartUpload = await env.R2_BUCKET.createMultipartUpload(r2Key, {
     httpMetadata: { contentType },
     customMetadata: {
@@ -154,6 +163,7 @@ async function handleDirectUpload(
     || filename;
   const contentType = request.headers.get('Content-Type')?.trim() || DEFAULT_CONTENT_TYPE;
   const r2Key = buildUploadKey(orgId, workspaceId, filename);
+  if (!env.R2_BUCKET) return r2Unavailable();
   const object = await env.R2_BUCKET.put(r2Key, request.body, {
     httpMetadata: { contentType },
     customMetadata: {
@@ -192,6 +202,7 @@ async function handleMultipartUploadPart(
   }
 
   const r2Key = buildUploadKey(orgId, workspaceId, filename);
+  if (!env.R2_BUCKET) return r2Unavailable();
   const multipartUpload = env.R2_BUCKET.resumeMultipartUpload(r2Key, uploadId);
 
   try {
@@ -227,6 +238,7 @@ async function handleMultipartComplete(
   }
 
   const r2Key = buildUploadKey(orgId, workspaceId, filename);
+  if (!env.R2_BUCKET) return r2Unavailable();
   const multipartUpload = env.R2_BUCKET.resumeMultipartUpload(r2Key, uploadId);
 
   try {
@@ -257,6 +269,7 @@ async function handleMultipartAbort(
   }
 
   const r2Key = buildUploadKey(orgId, workspaceId, filename);
+  if (!env.R2_BUCKET) return r2Unavailable();
   const multipartUpload = env.R2_BUCKET.resumeMultipartUpload(r2Key, uploadId);
 
   try {

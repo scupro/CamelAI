@@ -132,6 +132,12 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
     );
     // Retry briefly: a preview can reference an upload the moment before its
     // R2 write lands, which would otherwise 404 for a few seconds.
+    if (!env.R2_BUCKET) {
+      return Response.json(
+        { error: 'File storage (R2) is not available in this deployment' },
+        { status: 501 },
+      );
+    }
     const object = await getR2ObjectWithRetry(env.R2_BUCKET, r2Key);
 
     if (!object) {

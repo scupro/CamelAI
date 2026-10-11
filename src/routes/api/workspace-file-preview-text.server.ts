@@ -192,6 +192,12 @@ async function resolvePreviewStream({
   const bucketDir = source === 'upload' ? 'user-uploads' : 'user-outputs';
   // Retry briefly: a preview can reference the file the moment before its R2
   // write lands, which would otherwise 404 for a few seconds.
+  if (!env.R2_BUCKET) {
+    throw Response.json(
+      { error: 'File storage (R2) is not available in this deployment' },
+      { status: 501 },
+    );
+  }
   const object = await getR2ObjectWithRetry(
     env.R2_BUCKET,
     buildWorkspaceScopedR2Key(access.orgId, workspaceId, `${bucketDir}/${filePath}`)

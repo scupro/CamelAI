@@ -20,7 +20,7 @@ export interface AppScreenshotJob {
 
 export interface ScreenshotEnv extends WorkspaceAppFetcherEnv {
   BROWSER?: Fetcher;
-  R2_BUCKET: R2Bucket;
+  R2_BUCKET?: R2Bucket;
   ORG: DurableObjectNamespace<OrgDO>;
 }
 
@@ -79,6 +79,17 @@ export async function captureScreenshot(
         useDispatchInterception,
       },
     );
+
+    if (!env.R2_BUCKET) {
+      const errorMessage = 'Missing R2_BUCKET binding for screenshot storage.';
+      await orgStub.updateWorkerScriptPreview(job.script_name, {
+        status: 'failed',
+        preview_key: null,
+        preview_error: errorMessage,
+        deploy_ts: job.deploy_ts,
+      });
+      return { success: false, error: errorMessage };
+    }
 
     const { currentKey, versionedKey } = buildPreviewKeys(job);
     await env.R2_BUCKET.put(versionedKey, image, {

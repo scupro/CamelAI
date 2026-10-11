@@ -1066,6 +1066,9 @@ async function uploadSlackEventFiles(
         installation.workspaceId,
         `user-uploads/${storedFilename}`,
       );
+      // Free Tier 無 R2 綁定：無法保存 Slack 附件，略過這個檔案。
+      if (!env.R2_BUCKET) continue;
+
       await env.R2_BUCKET.put(r2Key, body, {
         httpMetadata: { contentType },
         customMetadata: {
@@ -1459,6 +1462,11 @@ async function uploadTelegramFile(args: {
     args.contentType ||
     response.headers.get("content-type") ||
     "application/octet-stream";
+  // Free Tier 無 R2 綁定：無法保存 Telegram 附件。
+  if (!args.env.R2_BUCKET) {
+    throw new Error("Attachment storage (R2) is not available in this deployment");
+  }
+
   await args.env.R2_BUCKET.put(r2Key, body, {
     httpMetadata: {
       contentType,

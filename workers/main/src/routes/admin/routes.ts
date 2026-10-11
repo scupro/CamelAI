@@ -2648,6 +2648,11 @@ routes.get(
     }> = [];
     let cursor: string | undefined;
 
+    // Free Tier 無 R2 綁定：admin 物件瀏覽沒有資料可列。
+    if (!env.R2_BUCKET) {
+      return c.json({ error: "R2 object storage is not available in this deployment" }, 501);
+    }
+
     while (true) {
       const list = await env.R2_BUCKET.list({ prefix, cursor, limit: 1000 });
       for (const obj of list.objects) {
@@ -3119,6 +3124,10 @@ routes.get(
 
     if (!key) {
       return c.json({ error: "Not found" }, 404);
+    }
+
+    if (!c.env.R2_BUCKET) {
+      return c.json({ error: "R2 object storage is not available in this deployment" }, 501);
     }
 
     const obj = await c.env.R2_BUCKET.head(key);

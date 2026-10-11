@@ -27,7 +27,7 @@ const WORKSPACE_STORE_TABLE = `cf_workspace_${WORKSPACE_STORE_NAMESPACE}`;
 
 export interface WorkspaceFilesystemEnv {
   WORKSPACE_FS: DurableObjectNamespace<WorkspaceFilesystemDO>;
-  R2_BUCKET: R2Bucket;
+  R2_BUCKET?: R2Bucket;
   ARTIFACTS?: ArtifactsBinding;
   CF_ACCOUNT_ID?: string;
   ARTIFACTS_NAMESPACE?: string;
@@ -801,6 +801,10 @@ export class WorkspaceFilesystemDO extends DurableObject<WorkspaceFilesystemEnv>
   }
 
   async projectCreateSourceSnapshot(input: { message?: unknown } = {}): Promise<ProjectSourceSnapshot> {
+    // Free Tier 無 R2 綁定（R2 啟用需登記付款方式，操作超量即計費），專案原始碼快照需要 blob 儲存體，無法建立。
+    if (!this.env.R2_BUCKET) {
+      throw new Error("Project source snapshots require R2 object storage, which is not available in this deployment");
+    }
     const message = typeof input.message === "string" && input.message.trim()
       ? input.message.trim().slice(0, 240)
       : undefined;
@@ -880,6 +884,10 @@ export class WorkspaceFilesystemDO extends DurableObject<WorkspaceFilesystemEnv>
   }
 
   async projectRestoreSourceSnapshot(snapshotId: unknown): Promise<ProjectSourceSnapshot> {
+    // Free Tier 無 R2 綁定（R2 啟用需登記付款方式，操作超量即計費），無 blob 可還原。
+    if (!this.env.R2_BUCKET) {
+      throw new Error("Project source snapshots require R2 object storage, which is not available in this deployment");
+    }
     const id = requireSnapshotId(snapshotId);
     const snapshot = await this.ctx.storage.kv.get<ProjectSourceSnapshot>(`${PROJECT_SNAPSHOT_PREFIX}${id}`);
     if (!snapshot) throw new Error(`Project source snapshot not found: ${id}`);
@@ -931,9 +939,12 @@ export class WorkspaceFilesystemDO extends DurableObject<WorkspaceFilesystemEnv>
     }
     await this.ctx.storage.kv.put(PROJECT_SNAPSHOT_INDEX_KEY, []);
     let blobsDeleted = 0;
-    for (const key of blobKeys) {
-      await this.env.R2_BUCKET.delete(key);
-      blobsDeleted += 1;
+    // Free Tier 無 R2 綁定（R2 啟用需登記付款方式，操作超量即計費）：快照中繼資料仍會從 KV 清除，但沒有 blob 可刪。
+    if (this.env.R2_BUCKET) {
+      for (const key of blobKeys) {
+        await this.env.R2_BUCKET.delete(key);
+        blobsDeleted += 1;
+      }
     }
     return { snapshotsDeleted, blobsDeleted };
   }
